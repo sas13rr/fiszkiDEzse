@@ -1,0 +1,3877 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Fiszki – Nauka Niemieckiego</title>
+  <meta name="description" content="Interaktywna aplikacja do nauki słówek z języka niemieckiego z fiszkami 3D, minigrami, testem, synchronizacją w chmurze Supabase i wspólnym rankingiem klasy.">
+  <meta property="og:title" content="Fiszki – Nauka Niemieckiego">
+  <meta property="og:description" content="Interaktywna aplikacja do nauki słówek z języka niemieckiego z fiszkami 3D, minigrami, testem, synchronizacją w chmurze Supabase i wspólnym rankingiem klasy.">
+  <!-- Tailwind CSS dla responsywnego i nowoczesnego layoutu -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Tone.js do proceduralnych efektów dźwiękowych (bez zewnętrznych plików MP3) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <!-- Supabase JS SDK v2 (prawdziwa baza SQL w chmurze, działa bezpośrednio na GitHub Pages) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Wspólna logika synchronizacji, serii, walidacji i rankingu -->
+  <script src="./sync-core.js"></script>
+  <!-- Czcionka Inter z Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <style>
+    /* =====================================================================
+       STYL BAZOWY, KOLORY RODZAJNIKÓW I BEZAWARYJNE OBRACANIE FISZKI 3D
+       ===================================================================== */
+    :root {
+      --bg-dark: #070b14;
+      --der-color: #38bdf8;
+      --die-color: #fb7185;
+      --das-color: #4ade80;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background-color: var(--bg-dark);
+      color: #f8fafc;
+      min-height: 100vh;
+      overflow-x: hidden;
+      overscroll-behavior-y: none;
+    }
+
+    /* Ambientowe tło */
+    .ambient-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      overflow: hidden;
+      background: radial-gradient(circle at 15% 10%, rgba(99, 102, 241, 0.22), transparent 45%),
+                  radial-gradient(circle at 85% 25%, rgba(56, 189, 248, 0.16), transparent 40%),
+                  radial-gradient(circle at 50% 90%, rgba(244, 63, 94, 0.12), transparent 45%),
+                  #070b14;
+    }
+
+    /* Panele szklane (Glassmorphism) */
+    .glass {
+      background: rgba(19, 27, 46, 0.74);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .glass-strong {
+      background: rgba(15, 23, 42, 0.94);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Kolorowanie rodzajników niemieckich */
+    .der { color: var(--der-color); font-weight: 800; }
+    .die { color: var(--die-color); font-weight: 800; }
+    .das { color: var(--das-color); font-weight: 800; }
+
+    /* =====================================================================
+       POPRAWIONA MECHANIKA 3D FISZKI (iOS Safari + Android Chrome + PC)
+       Zewnętrzna warstwa przesuwa (swipe), wewnętrzna obraca w 3D (flip).
+       ===================================================================== */
+    .swipe-shell {
+      position: relative;
+      width: 100%;
+      height: 310px;
+      touch-action: pan-y;
+      will-change: transform;
+      cursor: pointer;
+    }
+
+    .card-scene {
+      width: 100%;
+      height: 100%;
+      perspective: 1200px;
+      -webkit-perspective: 1200px;
+    }
+
+    .flashcard-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      transform-style: preserve-3d;
+      -webkit-transform-style: preserve-3d;
+      transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    .flashcard-inner.is-flipped {
+      transform: rotateY(180deg);
+      -webkit-transform: rotateY(180deg);
+    }
+
+    .flashcard-face {
+      position: absolute;
+      inset: 0;
+      border-radius: 28px;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 28px 22px;
+      text-align: center;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+    }
+
+    .flashcard-front {
+      background: linear-gradient(155deg, #1b2744 0%, #0f172a 100%);
+      border: 1px solid rgba(255, 255, 255, 0.11);
+      transform: rotateY(0deg) translateZ(1px);
+      -webkit-transform: rotateY(0deg) translateZ(1px);
+      pointer-events: auto;
+    }
+
+    .flashcard-back {
+      background: linear-gradient(155deg, #1e2a4a 0%, #0b1120 100%);
+      border: 1px solid rgba(99, 102, 241, 0.5);
+      transform: rotateY(180deg) translateZ(1px);
+      -webkit-transform: rotateY(180deg) translateZ(1px);
+      pointer-events: none;
+    }
+
+    /* Blokada przejmowania kliknięć przez ukrytą stronę karty */
+    .flashcard-inner.is-flipped .flashcard-front { pointer-events: none; }
+    .flashcard-inner.is-flipped .flashcard-back  { pointer-events: auto; }
+
+    /* Animacja potrząsania przy błędzie */
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-8px); }
+      40% { transform: translateX(8px); }
+      60% { transform: translateX(-5px); }
+      80% { transform: translateX(5px); }
+    }
+    .animate-shake { animation: shake 0.36s ease; }
+
+    /* Animacja pojawienia się elementu */
+    @keyframes popIn {
+      0% { transform: scale(0.92); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .animate-pop { animation: popIn 0.24s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+
+    /* Przyciski z wyczuwalnym wciśnięciem */
+    .btn-arcade {
+      transition: transform 0.12s ease, opacity 0.15s ease;
+    }
+    .btn-arcade:active {
+      transform: translateY(2px) scale(0.97);
+    }
+
+    /* Ukrycie paska przewijania dla poziomych pigułek */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Canvas do konfetti nad stroną */
+    #confettiCanvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* Widoki zakładek */
+    .tab-view { display: none; }
+    .tab-view.active { display: block; animation: popIn 0.2s ease; }
+  </style>
+</head>
+<body class="pb-28 select-none">
+
+  <!-- Tło ambientowe i canvas konfetti -->
+  <div class="ambient-bg"></div>
+  <canvas id="confettiCanvas"></canvas>
+
+  <!-- Powiadomienia Toast -->
+  <div id="toastContainer" class="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- Customowy Modal (zamiast alert/confirm) -->
+  <div id="customModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+    <div class="glass-strong rounded-3xl p-6 w-full max-w-sm border border-white/15 shadow-2xl animate-pop">
+      <div id="modalIcon" class="text-4xl mb-3 text-center">⚠️</div>
+      <h3 id="modalTitle" class="text-lg font-extrabold text-center text-white mb-2">Tytuł</h3>
+      <p id="modalText" class="text-sm text-slate-300 text-center mb-6 leading-relaxed">Treść</p>
+      <div id="modalActions" class="flex gap-3"></div>
+    </div>
+  </div>
+
+  <!-- MODAL KONTA: LOGOWANIE I REJESTRACJA (SUPABASE) -->
+  <div id="authModal" role="dialog" aria-modal="true" aria-labelledby="authModalHeading" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="glass-strong rounded-3xl p-5 sm:p-6 w-full max-w-sm border border-white/15 shadow-2xl animate-pop my-auto select-text">
+      <div class="flex items-start justify-between gap-2 mb-4">
+        <div>
+          <h3 id="authModalHeading" class="text-lg font-black text-white">Konto w chmurze</h3>
+          <p class="text-xs text-slate-400 mt-0.5">Synchronizuj postępy między telefonem a komputerem</p>
+        </div>
+        <button type="button" onclick="closeAuthModal()" aria-label="Zamknij okno konta" class="btn-arcade w-8 h-8 rounded-xl bg-white/10 text-slate-300 flex items-center justify-center text-sm font-bold shrink-0">✕</button>
+      </div>
+
+      <!-- Przełącznik Logowanie / Rejestracja -->
+      <div class="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-slate-900/90 border border-white/10 mb-4" role="tablist">
+        <button id="authTabLogin" type="button" role="tab" aria-selected="true" onclick="setAuthModalMode('login')" class="py-2 rounded-xl text-xs font-extrabold text-white bg-indigo-500 shadow transition-all">Logowanie</button>
+        <button id="authTabRegister" type="button" role="tab" aria-selected="false" onclick="setAuthModalMode('register')" class="py-2 rounded-xl text-xs font-extrabold text-slate-400 transition-all">Rejestracja</button>
+      </div>
+
+      <!-- Informacja o konfiguracji Supabase (widoczna tylko gdy klucze to placeholdery) -->
+      <div id="authDemoHint" class="hidden mb-4 p-3 rounded-2xl bg-amber-500/10 border border-amber-400/30 text-[11px] text-amber-200 leading-relaxed">
+        <b>Tryb podglądu lokalnego:</b> nie wklejono jeszcze <code>SUPABASE_CONFIG</code> w <code>index.html</code>. Możesz przetestować rejestrację i ranking lokalnie, a po wklejeniu Project URL i klucza <code>anon</code> dane automatycznie przełączą się na bazę SQL Supabase.
+      </div>
+
+      <!-- FORMULARZ LOGOWANIA -->
+      <form id="loginForm" onsubmit="handleLoginSubmit(event)" class="space-y-3" novalidate>
+        <div>
+          <label for="authLoginIdentifier" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login lub e-mail</label>
+          <input id="authLoginIdentifier" type="text" autocomplete="username" placeholder="np. Kuba_8A lub kuba@szkola.pl" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+        </div>
+        <div>
+          <label for="authLoginPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
+          <input id="authLoginPassword" type="password" autocomplete="current-password" placeholder="Minimum 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+        </div>
+        <div id="authLoginError" role="alert" class="hidden p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-semibold text-rose-200"></div>
+        <button id="authLoginSubmitBtn" type="submit" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-black text-sm shadow-lg shadow-indigo-500/25">
+          Zaloguj się
+        </button>
+      </form>
+
+      <!-- FORMULARZ REJESTRACJI -->
+      <form id="registerForm" onsubmit="handleRegisterSubmit(event)" class="hidden space-y-2.5" novalidate>
+        <div class="grid grid-cols-3 gap-2">
+          <div class="col-span-2">
+            <label for="authRegUsername" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login (nick)</label>
+            <input id="authRegUsername" type="text" autocomplete="username" maxlength="24" placeholder="np. Kuba_8A" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          </div>
+          <div>
+            <label for="authRegClass" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Klasa</label>
+            <input id="authRegClass" type="text" maxlength="20" value="8A" placeholder="8A" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          </div>
+        </div>
+        <div>
+          <label for="authRegEmail" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">E-mail <span class="text-slate-500 normal-case font-medium">(opcjonalny)</span></label>
+          <input id="authRegEmail" type="email" autocomplete="email" placeholder="Opcjonalnie (np. kuba@szkola.pl)" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label for="authRegPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
+            <input id="authRegPassword" type="password" autocomplete="new-password" placeholder="Min. 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          </div>
+          <div>
+            <label for="authRegConfirm" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Powtórz</label>
+            <input id="authRegConfirm" type="password" autocomplete="new-password" placeholder="Powtórz hasło" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          </div>
+        </div>
+        <div id="authRegError" role="alert" class="hidden p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-semibold text-rose-200"></div>
+        <button id="authRegSubmitBtn" type="submit" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 text-white font-black text-sm shadow-lg shadow-emerald-500/25">
+          Załóż konto i synchronizuj
+        </button>
+      </form>
+
+      <button type="button" onclick="closeAuthModal()" class="mt-3 w-full py-2 text-xs font-bold text-slate-400 hover:text-slate-200 transition-colors">
+        Kontynuuj jako gość (zapis w pamięci urządzenia)
+      </button>
+    </div>
+  </div>
+
+  <!-- MODAL EDYCJI PROFILU (NICK I KLASA) -->
+  <div id="editProfileModal" role="dialog" aria-modal="true" aria-labelledby="editProfileHeading" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+    <div class="glass-strong rounded-3xl p-6 w-full max-w-sm border border-white/15 shadow-2xl animate-pop select-text">
+      <div class="flex items-center justify-between mb-4">
+        <h3 id="editProfileHeading" class="text-lg font-black text-white">Edytuj profil</h3>
+        <button type="button" onclick="closeEditProfileModal()" aria-label="Zamknij edycję profilu" class="btn-arcade w-8 h-8 rounded-xl bg-white/10 text-slate-300 flex items-center justify-center text-sm font-bold">✕</button>
+      </div>
+      <form onsubmit="handleEditProfileSubmit(event)" class="space-y-3" novalidate>
+        <div>
+          <label for="editUsernameInput" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nick w rankingu</label>
+          <input id="editUsernameInput" type="text" maxlength="24" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none">
+        </div>
+        <div>
+          <label for="editClassInput" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Klasa / grupa</label>
+          <input id="editClassInput" type="text" maxlength="20" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white outline-none">
+        </div>
+        <div id="editProfileError" role="alert" class="hidden p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-semibold text-rose-200"></div>
+        <div class="flex gap-2.5 pt-1">
+          <button type="button" onclick="closeEditProfileModal()" class="btn-arcade flex-1 py-3 rounded-xl glass text-slate-300 font-bold text-sm">Anuluj</button>
+          <button id="editProfileSaveBtn" type="submit" class="btn-arcade flex-1 py-3 rounded-xl bg-indigo-500 text-white font-extrabold text-sm">Zapisz</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Główny kontener aplikacji -->
+  <div class="w-full max-w-md mx-auto px-4 pt-4">
+
+    <!-- GÓRNY PASEK: Nazwa "Fiszki", Poziom XP, Seria, Konto/Chmura, Dźwięk i Kierunek -->
+    <header class="flex items-center justify-between gap-2 mb-4">
+      <button type="button" onclick="switchTab('profile')" aria-label="Otwórz profil i postępy" class="flex items-center gap-2.5 text-left min-w-0">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center text-xl shadow-lg shadow-indigo-500/30 font-black shrink-0">
+          🗂️
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-1.5 whitespace-nowrap">
+            <span class="font-black text-base tracking-tight text-white">Fiszki</span>
+            <span id="hdrLevelBadge" class="text-[10px] font-extrabold px-1.5 py-0.5 rounded-full bg-indigo-500/25 text-indigo-300 border border-indigo-400/30">Lv.1</span>
+          </div>
+          <div class="flex items-center gap-1.5 mt-0.5 whitespace-nowrap">
+            <div class="w-12 sm:w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden shrink-0">
+              <div id="hdrXpBar" class="h-full bg-gradient-to-r from-indigo-400 to-cyan-400 transition-all duration-500" style="width: 0%"></div>
+            </div>
+            <span id="hdrXpText" class="text-[10px] font-semibold text-slate-400">0 XP</span>
+            <span id="hdrStreakBadge" class="text-[10px] font-extrabold text-amber-300" title="Aktualna seria dni nauki">🔥 0</span>
+          </div>
+        </div>
+      </button>
+
+      <div class="flex items-center gap-1.5 shrink-0">
+        <button id="hdrAccountBtn" type="button" onclick="onHeaderAccountClick()" aria-label="Konto i synchronizacja" class="btn-arcade px-2.5 h-9 rounded-xl glass text-[11px] font-extrabold text-indigo-200 border border-indigo-400/30 flex items-center gap-1 max-w-[105px]">
+          <span id="hdrAccountIcon">👤</span>
+          <span id="hdrAccountLabel" class="truncate">Zaloguj</span>
+        </button>
+        <button id="soundToggleBtn" type="button" onclick="toggleSound()" aria-label="Przełącz efekty dźwiękowe" class="btn-arcade w-9 h-9 rounded-xl glass flex items-center justify-center text-base" title="Efekty dźwiękowe">🔊</button>
+        <button id="dirToggleBtn" type="button" onclick="toggleDirection()" aria-label="Zmień kierunek tłumaczenia" class="btn-arcade px-2.5 h-9 rounded-xl glass text-[11px] font-extrabold text-cyan-300 border border-cyan-500/25">PL ➔ DE</button>
+      </div>
+    </header>
+
+    <main>
+    <!-- ===================================================================
+         WIDOK 1: FISZKI (EKSPLORATOR DZIAŁÓW/LEKCJI + EKRAN NAUKI)
+         =================================================================== -->
+    <section id="view-cards" class="tab-view active">
+
+      <!-- PODWIDOK 1A: DRZEWO DZIAŁÓW I FOLDERY LEKCJI -->
+      <div id="cardsFolderView">
+        <!-- Globalny pasek postępu -->
+        <div class="glass rounded-2xl p-3.5 mb-4">
+          <div class="flex justify-between items-center text-xs font-semibold mb-2">
+            <span class="text-emerald-400" id="globalMasteredStat">✓ Opanowane: 0 / 85</span>
+            <span class="text-rose-400" id="globalHardStat">🔥 Do powtórki: 0</span>
+          </div>
+          <div class="w-full h-2 bg-slate-800/90 rounded-full overflow-hidden">
+            <div id="globalProgressBar" class="h-full bg-gradient-to-r from-emerald-400 via-cyan-400 to-indigo-500 transition-all duration-500" style="width: 0%"></div>
+          </div>
+        </div>
+
+        <!-- Szybkie inteligentne foldery (Powtórki / Nieopanowane) -->
+        <div class="grid grid-cols-2 gap-2.5 mb-5">
+          <button type="button" onclick="openFlashcardScope('hard', '🔥 Do powtórki')" class="btn-arcade glass rounded-2xl p-3.5 text-left border border-rose-500/25 flex items-center gap-3">
+            <span class="text-2xl">🔥</span>
+            <div class="min-w-0">
+              <div class="text-xs font-extrabold text-white">Do powtórki</div>
+              <div id="quickHardCount" class="text-[11px] font-bold text-rose-300">0 słówek</div>
+            </div>
+          </button>
+          <button type="button" onclick="openFlashcardScope('unlearned', '🆕 Nieopanowane')" class="btn-arcade glass rounded-2xl p-3.5 text-left border border-cyan-500/25 flex items-center gap-3">
+            <span class="text-2xl">🆕</span>
+            <div class="min-w-0">
+              <div class="text-xs font-extrabold text-white">Nieopanowane</div>
+              <div id="quickUnlearnedCount" class="text-[11px] font-bold text-cyan-300">85 słówek</div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Nagłówek drzewa działów -->
+        <div class="flex items-center justify-between mb-2.5 px-1">
+          <h2 class="text-xs font-extrabold uppercase tracking-wider text-slate-400">Działy i lekcje (Niemiecki)</h2>
+          <span id="chaptersCountBadge" class="text-[11px] font-bold text-indigo-300">1 dział</span>
+        </div>
+
+        <!-- Kontener na dynamicznie generowane Działy -> Lekcje -->
+        <div id="curriculumTree" class="space-y-4"></div>
+      </div>
+
+      <!-- PODWIDOK 1B: AKTYWNA NAUKA FISZEK -->
+      <div id="cardsStudyView" class="hidden">
+        <!-- Pasek powrotu do działów + narzędzia -->
+        <div class="flex items-center justify-between gap-2 mb-3">
+          <button type="button" onclick="closeFlashcardStudy()" class="btn-arcade px-3 py-2 rounded-xl glass text-xs font-extrabold text-slate-200 flex items-center gap-1.5">
+            <span>←</span><span>Działy</span>
+          </button>
+          <div id="activeScopeTitle" class="text-xs font-extrabold text-cyan-300 truncate text-center flex-1 px-1">Lektion 1</div>
+          <div class="flex items-center gap-1.5">
+            <button type="button" onclick="shuffleFlashcards()" aria-label="Wymieszaj fiszki" class="btn-arcade w-9 h-9 rounded-xl glass flex items-center justify-center text-base" title="Wymieszaj">🔀</button>
+            <button id="autoSpeakBtn" type="button" onclick="toggleAutoSpeak()" aria-label="Przełącz auto-lektora" class="btn-arcade w-9 h-9 rounded-xl glass flex items-center justify-center text-sm" title="Auto-lektor przy odwróceniu">🗣️</button>
+          </div>
+        </div>
+
+        <!-- Pasek postępu w bieżącej rundzie -->
+        <div class="glass rounded-2xl px-3.5 py-2.5 mb-3">
+          <div class="flex justify-between items-center text-[11px] font-bold mb-1.5">
+            <span id="studyCounterText" class="text-slate-300">Runda 1 • Karta 1 / 19</span>
+            <span id="studyRoundStats" class="flex items-center gap-2">
+              <span class="text-emerald-400">✓ 0</span>
+              <span class="text-rose-400">✕ 0</span>
+            </span>
+          </div>
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div id="studyProgressBar" class="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all duration-300" style="width: 0%"></div>
+          </div>
+          <div id="studyPartialBanner" class="hidden mt-2 pt-2 border-t border-white/10 flex items-center justify-between gap-2 text-[11px]">
+            <span id="studyPartialText" class="text-cyan-300 font-semibold">Uczysz się tylko niezapamiętanych</span>
+            <button type="button" onclick="restartFullScope()" class="btn-arcade px-2.5 py-1 rounded-lg bg-white/10 text-white font-bold">Pokaż wszystkie</button>
+          </div>
+        </div>
+
+        <!-- KONTENER AKTYWNEJ KARTY I PRZYCISKÓW -->
+        <div id="cardsDeckStage">
+          <!-- Interaktywna Fiszka 3D ze Swipe'owaniem (Pointer Events) -->
+          <div class="relative mb-3">
+            <!-- Nakładki kierunkowe przy przesuwaniu palcem -->
+            <div id="swipeHintRight" class="pointer-events-none absolute inset-0 z-20 rounded-[28px] border-4 border-emerald-400 bg-emerald-500/20 flex items-center justify-center opacity-0 transition-opacity">
+              <span class="px-5 py-2 rounded-2xl bg-emerald-500 text-white font-black text-xl tracking-wide shadow-xl -rotate-6">ZAPAMIĘTAŁEM ✓</span>
+            </div>
+            <div id="swipeHintLeft" class="pointer-events-none absolute inset-0 z-20 rounded-[28px] border-4 border-rose-500 bg-rose-500/20 flex items-center justify-center opacity-0 transition-opacity">
+              <span class="px-5 py-2 rounded-2xl bg-rose-600 text-white font-black text-xl tracking-wide shadow-xl rotate-6">POWTÓRZ ✕</span>
+            </div>
+
+            <div id="swipeShell" class="swipe-shell">
+              <div class="card-scene">
+                <div id="flashcard" class="flashcard-inner">
+                  <!-- PRZÓD FISZKI -->
+                  <div class="flashcard-face flashcard-front">
+                    <div id="cardFrontBadge" class="absolute top-4 left-4 text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-white/10 text-slate-300">
+                      Polski
+                    </div>
+                    <button id="cardAudioFront" type="button" onclick="speakCurrentCard(event)" aria-label="Odsłuchaj wymowę niemiecką" class="btn-arcade absolute top-3.5 right-3.5 w-10 h-10 rounded-full bg-indigo-500/25 border border-indigo-400/40 text-indigo-100 flex items-center justify-center text-lg z-10">🔊</button>
+                    <div id="cardFrontWord" class="text-2xl sm:text-3xl font-extrabold leading-snug text-white px-2">Ładowanie...</div>
+                    <div id="cardFrontSub" class="text-xs text-slate-400 mt-5 font-medium">Dotknij kartę, żeby zobaczyć tłumaczenie</div>
+                  </div>
+
+                  <!-- TYŁ FISZKI (TŁUMACZENIE) -->
+                  <div class="flashcard-face flashcard-back">
+                    <div id="cardBackBadge" class="absolute top-4 left-4 text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-indigo-500/30 text-indigo-200">
+                      Niemiecki
+                    </div>
+                    <button id="cardAudioBack" type="button" onclick="speakCurrentCard(event)" aria-label="Odsłuchaj wymowę niemiecką" class="btn-arcade absolute top-3.5 right-3.5 w-10 h-10 rounded-full bg-indigo-500/35 border border-indigo-400/50 text-white flex items-center justify-center text-lg z-10">🔊</button>
+                    <div id="cardBackWord" class="text-2xl sm:text-3xl font-extrabold leading-snug text-white px-2"></div>
+                    <div id="cardTipArea" class="mt-4 flex flex-wrap justify-center gap-1.5"></div>
+                    <div class="text-[11px] text-slate-400 mt-4 font-medium">Przesuń ⬅️ Powtórz • ➡️ Zapamiętałem</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Główne przyciski: Nie zapamiętałem / Zapamiętałem -->
+          <div class="grid grid-cols-2 gap-3 mb-2.5">
+            <button type="button" onclick="gradeFlashcard(false)" class="btn-arcade py-4 px-3 rounded-2xl bg-gradient-to-br from-rose-500 to-rose-700 text-white font-extrabold text-sm sm:text-base shadow-lg shadow-rose-600/25 flex items-center justify-center gap-2">
+              <span>✕</span><span>Nie zapamiętałem</span>
+            </button>
+            <button type="button" onclick="gradeFlashcard(true)" class="btn-arcade py-4 px-3 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white font-extrabold text-sm sm:text-base shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2">
+              <span>✓</span><span>Zapamiętałem</span>
+            </button>
+          </div>
+
+          <!-- Pomocnicza nawigacja (Poprzednia / Odwróć / Następna) -->
+          <div class="grid grid-cols-3 gap-2 mb-3">
+            <button type="button" onclick="stepFlashcard(-1)" class="btn-arcade py-2.5 rounded-xl glass text-xs font-bold text-slate-300">← Poprzednia</button>
+            <button type="button" onclick="flipFlashcard()" class="btn-arcade py-2.5 rounded-xl glass text-xs font-extrabold text-indigo-300 border border-indigo-400/30">🔄 Odwróć</button>
+            <button type="button" onclick="stepFlashcard(1)" class="btn-arcade py-2.5 rounded-xl glass text-xs font-bold text-slate-300">Następna →</button>
+          </div>
+
+          <!-- Legenda rodzajników -->
+          <div class="glass rounded-2xl px-4 py-2.5 flex items-center justify-between text-[11px] font-semibold text-slate-400">
+            <span>Rodzajniki:</span>
+            <div class="flex items-center gap-3">
+              <span><span class="der">der</span> (męski)</span>
+              <span><span class="die">die</span> (żeński/mn.)</span>
+              <span><span class="das">das</span> (nijaki)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- EKRAN PODSUMOWANIA RUNDY (POWTÓRKA TYLKO NIEZAPAMIĘTANYCH) -->
+        <div id="cardsRoundSummary" class="hidden glass rounded-3xl p-6 text-center animate-pop"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         WIDOK 2: STREFA GIER (4 INTERAKTYWNE MINIGRY ARCADOWE)
+         =================================================================== -->
+    <section id="view-games" class="tab-view">
+      <!-- MENU WYBORU GIER -->
+      <div id="gamesMenu">
+        <div class="mb-4">
+          <h2 class="text-xl font-black text-white">Strefa Gier 🎮</h2>
+          <p class="text-xs text-slate-400 mt-0.5">Wybierz dział lub lekcję, nabijaj XP i bij rekordy!</p>
+        </div>
+
+        <!-- Dynamiczny selektor Działu / Lekcji -->
+        <div class="mb-4">
+          <label for="gameScopeSelect" class="sr-only">Wybierz dział lub lekcję dla gry</label>
+          <select id="gameScopeSelect" class="w-full glass rounded-xl px-3.5 py-2.5 text-sm font-semibold text-white outline-none"></select>
+        </div>
+
+        <div class="grid grid-cols-1 gap-3">
+          <!-- Gra 1: Łączenie Par -->
+          <button type="button" onclick="startMatchGame()" class="btn-arcade glass rounded-2xl p-4 text-left flex items-center gap-4 border border-cyan-500/20 hover:border-cyan-400/50">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center text-2xl shrink-0 shadow-lg shadow-cyan-500/25">🔗</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-extrabold text-base text-white">Łączenie Par</h3>
+                <span id="recMatch" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300">Brak rekordu</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1">Połącz 15 par PL–DE w 3 falach na czas. Idealne na rozgrzewkę!</p>
+            </div>
+          </button>
+
+          <!-- Gra 2: Der / Die / Das Rush -->
+          <button type="button" onclick="startArticleGame()" class="btn-arcade glass rounded-2xl p-4 text-left flex items-center gap-4 border border-pink-500/20 hover:border-pink-400/50">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center text-2xl shrink-0 shadow-lg shadow-pink-500/25">🎯</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-extrabold text-base text-white">Der / Die / Das Rush</h3>
+                <span id="recArticle" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-300">Rekord: 0</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1">3 życia ❤️❤️❤️. Strzelaj właściwy rodzajnik i wbijaj combo!</p>
+            </div>
+          </button>
+
+          <!-- Gra 3: Szybka Piłka -->
+          <button type="button" onclick="startSpeedTFGame()" class="btn-arcade glass rounded-2xl p-4 text-left flex items-center gap-4 border border-amber-500/20 hover:border-amber-400/50">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-2xl shrink-0 shadow-lg shadow-amber-500/25">🔥</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-extrabold text-base text-white">Szybka Piłka (45s)</h3>
+                <span id="recSpeed" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">Rekord: 0</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1">Prawda czy Fałsz? 45 sekund na reakcję, pudło zabiera 3s!</p>
+            </div>
+          </button>
+
+          <!-- Gra 4: Układanka Zdań i Słów -->
+          <button type="button" onclick="startScrambleGame()" class="btn-arcade glass rounded-2xl p-4 text-left flex items-center gap-4 border border-emerald-500/20 hover:border-emerald-400/50">
+            <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-2xl shrink-0 shadow-lg shadow-emerald-500/25">🧩</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <h3 class="font-extrabold text-base text-white">Układanka Zdań i Słów</h3>
+                <span id="recScramble" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">Ułożone: 0</span>
+              </div>
+              <p class="text-xs text-slate-400 mt-1">Układaj niemieckie słówka i zwroty z kafelków z lektorem!</p>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <!-- KONTENER AKTYWNEJ MINIGRY -->
+      <div id="activeGameArea" class="hidden">
+        <div class="flex items-center justify-between mb-3">
+          <button type="button" onclick="exitCurrentGame()" class="btn-arcade px-3 py-1.5 rounded-xl glass text-xs font-bold text-slate-300">← Wróć do gier</button>
+          <div id="gameHudRight" class="flex items-center gap-2 text-xs font-extrabold"></div>
+        </div>
+        <div id="gameStage"></div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         WIDOK 3: TEST 25 PYTAŃ (OCENA SZKOLNA 1–6)
+         =================================================================== -->
+    <section id="view-quiz" class="tab-view">
+      <div id="quizStartBox" class="glass rounded-3xl p-6 text-center">
+        <div class="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-3xl shadow-lg shadow-indigo-500/30 mb-4">⚡</div>
+        <h2 class="text-2xl font-black text-white mb-1">Test: 25 pytań</h2>
+        <p class="text-xs text-slate-400 mb-5 leading-relaxed">Symulacja kartkówki z oceną szkolną (1–6). Błędne słówka same lądują w folderze „Do powtórki”!</p>
+
+        <div class="mb-5 text-left">
+          <label for="quizScopeSelect" class="text-[11px] font-bold uppercase tracking-wider text-slate-400 block mb-1.5">Wybierz dział lub lekcję:</label>
+          <select id="quizScopeSelect" class="w-full glass rounded-xl px-3.5 py-3 text-sm font-semibold text-white outline-none"></select>
+        </div>
+
+        <button type="button" onclick="startQuiz()" class="btn-arcade w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-black text-base shadow-lg shadow-indigo-500/30">
+          Rozpocznij Test 🚀
+        </button>
+      </div>
+
+      <div id="quizPlayBox" class="hidden">
+        <div class="flex justify-between items-center text-xs font-bold mb-2">
+          <span id="quizCounter" class="text-slate-300">Pytanie 1 / 25</span>
+          <div class="flex items-center gap-2">
+            <span id="quizComboBadge" class="hidden px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">🔥 x2</span>
+            <span id="quizLiveScore" class="text-emerald-400">Wynik: 0</span>
+          </div>
+        </div>
+        <div class="w-full h-2 bg-slate-800 rounded-full overflow-hidden mb-4">
+          <div id="quizProgressBar" class="h-full bg-gradient-to-r from-indigo-500 to-cyan-400 transition-all duration-300" style="width: 0%"></div>
+        </div>
+
+        <div class="glass rounded-3xl p-6 text-center mb-4">
+          <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-2">Przetłumacz</div>
+          <div id="quizQuestionText" class="text-2xl font-black text-white leading-snug"></div>
+          <button id="quizSpeakBtn" type="button" onclick="speakQuizWord()" class="hidden btn-arcade mt-3 mx-auto px-3 py-1.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-bold">🔊 Posłuchaj</button>
+        </div>
+
+        <div id="quizOptionsBox" class="flex flex-col gap-2.5"></div>
+      </div>
+
+      <div id="quizEndBox" class="hidden glass rounded-3xl p-6 text-center">
+        <div class="text-xs font-bold uppercase tracking-widest text-slate-400">Ocena ze sprawdzianu</div>
+        <div id="quizGradeBadge" class="text-6xl font-black my-2 bg-gradient-to-br from-cyan-300 to-indigo-400 bg-clip-text text-transparent">5</div>
+        <div id="quizFinalScore" class="text-lg font-extrabold text-white">22 / 25 (88%)</div>
+        <p id="quizFinalComment" class="text-xs text-slate-300 mt-1 mb-4"></p>
+
+        <div id="quizMistakesBox" class="text-left max-h-56 overflow-y-auto flex flex-col gap-2 mb-5"></div>
+
+        <div class="grid grid-cols-1 gap-2.5">
+          <button type="button" onclick="startQuiz()" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-extrabold text-sm">Zagraj jeszcze raz</button>
+          <button id="quizPracticeMistakesBtn" type="button" onclick="practiceHardFromQuiz()" class="hidden btn-arcade w-full py-3 rounded-2xl glass text-rose-300 font-bold text-sm border border-rose-500/30">🔥 Poćwicz błędne w fiszkach</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===================================================================
+         WIDOK 4: WSPÓLNY RANKING KLASY NA ŻYWO (SUPABASE SQL + REALTIME)
+         =================================================================== -->
+    <section id="view-ranking" class="tab-view">
+      <div class="flex items-center justify-between gap-2 mb-3">
+        <div>
+          <h2 class="text-xl font-black text-white flex items-center gap-2">
+            <span>Ranking Klasy</span>
+            <span id="rankingLivePill" class="whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">Na żywo</span>
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">Wspólna tabela wyników aktualizowana automatycznie</p>
+        </div>
+        <button type="button" onclick="refreshLeaderboard(true)" aria-label="Odśwież ranking klasy" class="btn-arcade px-3 h-9 rounded-xl glass text-xs font-extrabold text-cyan-300 border border-cyan-500/25 shrink-0">
+          ↻ Odśwież
+        </button>
+      </div>
+
+      <!-- Baner dla gości zachęcający do dołączenia do rankingu -->
+      <div id="rankingGuestBanner" class="hidden glass rounded-2xl p-3.5 mb-3.5 border border-indigo-400/35 flex items-center justify-between gap-3">
+        <div class="text-xs text-slate-200 leading-snug">
+          <div class="font-extrabold text-white">Dołącz do rankingu klasy!</div>
+          <div class="text-[11px] text-slate-400 mt-0.5">Załóż konto, aby zapisać swoje XP, serię i rekordy w chmurze.</div>
+        </div>
+        <button type="button" onclick="openAuthModal('register')" class="btn-arcade px-3 py-2 rounded-xl bg-indigo-500 text-white font-extrabold text-xs shrink-0">Dołącz</button>
+      </div>
+
+      <!-- Kategorie sortowania rankingu -->
+      <div class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-2 mb-2" id="rankingSortPills">
+        <button type="button" onclick="setLeaderboardSort('xp')" data-sort="xp" class="lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 bg-indigo-500 text-white">⚡ XP</button>
+        <button type="button" onclick="setLeaderboardSort('streak')" data-sort="streak" class="lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 glass text-slate-300">🔥 Seria</button>
+        <button type="button" onclick="setLeaderboardSort('mastered')" data-sort="mastered" class="lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 glass text-slate-300">✓ Słówka</button>
+        <button type="button" onclick="setLeaderboardSort('records')" data-sort="records" class="lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 glass text-slate-300">🎮 Rekordy</button>
+      </div>
+
+      <!-- Filtr klasy -->
+      <div class="flex items-center justify-between gap-2 mb-4">
+        <label for="rankingClassFilter" class="text-[11px] font-bold uppercase tracking-wider text-slate-400 shrink-0">Grupa / klasa:</label>
+        <select id="rankingClassFilter" onchange="onLeaderboardClassChange()" class="glass rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none max-w-[180px]">
+          <option value="ALL" class="bg-slate-900">Wszystkie klasy</option>
+        </select>
+      </div>
+
+      <!-- Podium TOP 3 -->
+      <div id="rankingPodium" class="grid grid-cols-3 gap-2 items-end mb-4"></div>
+
+      <!-- Pasek aktualnej pozycji zalogowanego ucznia -->
+      <div id="rankingMyRankBar" class="hidden glass rounded-2xl px-3.5 py-2.5 mb-3 border border-indigo-400/40 flex items-center justify-between text-xs"></div>
+
+      <!-- Pełna lista uczniów -->
+      <div id="rankingList" class="flex flex-col gap-2"></div>
+    </section>
+
+    <!-- ===================================================================
+         WIDOK 5: SŁOWNIK + ŚCIĄGA Z NIEMIECKIEGO
+         =================================================================== -->
+    <section id="view-dict" class="tab-view">
+      <details class="glass rounded-2xl p-3.5 mb-3 group">
+        <summary class="font-extrabold text-sm text-cyan-300 cursor-pointer flex items-center justify-between list-none">
+          <span>💡 Ściąga z niemieckiego (jak to czytać?)</span>
+          <span class="text-xs text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+        </summary>
+        <div class="mt-3 pt-3 border-t border-white/10 text-xs text-slate-300 space-y-2 leading-relaxed">
+          <p>• <span class="der">der</span> / <span class="die">die</span> / <span class="das">das</span> – rodzajniki. Zawsze ucz się ich razem z rzeczownikiem! W liczbie mnogiej zawsze jest <span class="die">die</span>.</p>
+          <p>• <b>Kreska pionowa `|`</b> (np. <i>auf|passen</i>, <i>weh|tun</i>) to czasownik rozdzielny – w zdaniu początek leci na koniec: <i>Ich <b>passe</b> gut <b>auf</b></i>.</p>
+          <p>• <b>Końcówka po przecinku</b> (np. <i>-en, -e, -̈e</i>) pokazuje liczbę mnogą (<i>der Arzt → die Ärzte</i>).</p>
+        </div>
+      </details>
+
+      <div class="relative mb-3">
+        <label for="dictSearch" class="sr-only">Szukaj słówka po polsku lub niemiecku</label>
+        <input id="dictSearch" type="text" oninput="renderDict()" placeholder="Szukaj po polsku lub niemiecku..." class="w-full glass rounded-2xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-400 outline-none focus:border-indigo-400 select-text">
+        <span class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+      </div>
+
+      <!-- Dynamiczne pigułki filtrów generowane z CURRICULUM -->
+      <div class="flex gap-2 overflow-x-auto no-scrollbar pb-2 mb-2" id="dictFilterPills"></div>
+
+      <div id="dictList" class="flex flex-col gap-2"></div>
+    </section>
+
+    <!-- ===================================================================
+         WIDOK 6: PROFIL, KONTO W CHMURZE, STATYSTYKI, REKORDY I ODZNAKI
+         =================================================================== -->
+    <section id="view-profile" class="tab-view">
+      <!-- Karta konta i synchronizacji w chmurze -->
+      <div id="profileAccountCard" class="glass rounded-3xl p-4 mb-4 border border-indigo-400/25"></div>
+
+      <!-- Karta rangi, XP i serii -->
+      <div class="glass rounded-3xl p-5 mb-4 text-center">
+        <div class="text-4xl mb-1" id="profRankEmoji">🌱</div>
+        <div class="text-xs font-bold uppercase tracking-widest text-indigo-300" id="profLevelLabel">Poziom 1</div>
+        <h2 class="text-2xl font-black text-white mt-0.5" id="profRankTitle">Początkujący</h2>
+        <div class="mt-3 w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+          <div id="profXpBar" class="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between text-[11px] font-semibold text-slate-400 mt-1.5">
+          <span id="profTotalXp">0 XP</span>
+          <span id="profNextXp">Do kolejnego: 150 XP</span>
+        </div>
+
+        <!-- Podsumowanie serii i opanowanych słówek -->
+        <div class="grid grid-cols-3 gap-2 mt-4">
+          <div class="bg-slate-900/60 rounded-2xl p-2.5 border border-white/5">
+            <div class="text-[10px] font-bold text-slate-400">🔥 Seria</div>
+            <div id="profStreakNow" class="text-base font-black text-amber-300 mt-0.5">0 dni</div>
+          </div>
+          <div class="bg-slate-900/60 rounded-2xl p-2.5 border border-white/5">
+            <div class="text-[10px] font-bold text-slate-400">🏅 Max seria</div>
+            <div id="profStreakBest" class="text-base font-black text-orange-300 mt-0.5">0 dni</div>
+          </div>
+          <div class="bg-slate-900/60 rounded-2xl p-2.5 border border-white/5">
+            <div class="text-[10px] font-bold text-slate-400">✓ Opanowane</div>
+            <div id="profMasteredCompact" class="text-base font-black text-emerald-300 mt-0.5">0/85</div>
+          </div>
+        </div>
+
+        <button type="button" onclick="copyFlexStats()" class="btn-arcade mt-4 w-full py-2.5 rounded-xl bg-indigo-500/20 border border-indigo-400/35 text-indigo-200 font-bold text-xs flex items-center justify-center gap-2">
+          <span>📋</span><span>Skopiuj statystyki i wyślij znajomym!</span>
+        </button>
+      </div>
+
+      <!-- Dynamiczny postęp według Działów i Lekcji -->
+      <div class="glass rounded-3xl p-4 mb-4">
+        <h3 class="text-sm font-extrabold text-white mb-3">Postęp w działach i lekcjach</h3>
+        <div id="lessonStatsContainer" class="space-y-4"></div>
+      </div>
+
+      <!-- Rekordy -->
+      <div class="glass rounded-3xl p-4 mb-4">
+        <h3 class="text-sm font-extrabold text-white mb-3">Twoje rekordy 🏆</h3>
+        <div class="grid grid-cols-2 gap-2.5 text-center">
+          <div class="bg-slate-900/60 rounded-2xl p-3 border border-white/5">
+            <div class="text-[11px] text-slate-400 font-semibold">🔗 Łączenie Par</div>
+            <div id="statBestMatch" class="text-lg font-black text-cyan-300 mt-0.5">—</div>
+          </div>
+          <div class="bg-slate-900/60 rounded-2xl p-3 border border-white/5">
+            <div class="text-[11px] text-slate-400 font-semibold">🎯 Der/Die/Das</div>
+            <div id="statBestArticle" class="text-lg font-black text-pink-300 mt-0.5">0 pkt</div>
+          </div>
+          <div class="bg-slate-900/60 rounded-2xl p-3 border border-white/5">
+            <div class="text-[11px] text-slate-400 font-semibold">🔥 Szybka Piłka</div>
+            <div id="statBestSpeed" class="text-lg font-black text-amber-300 mt-0.5">0 pkt</div>
+          </div>
+          <div class="bg-slate-900/60 rounded-2xl p-3 border border-white/5">
+            <div class="text-[11px] text-slate-400 font-semibold">⚡ Najlepszy Test</div>
+            <div id="statBestQuiz" class="text-lg font-black text-emerald-300 mt-0.5">—</div>
+          </div>
+        </div>
+        <div class="mt-2.5 bg-slate-900/60 rounded-2xl px-3.5 py-2.5 border border-white/5 flex items-center justify-between text-xs">
+          <span class="text-slate-400 font-semibold">🧩 Układanka Zdań i Słów</span>
+          <span id="statScrambleTotal" class="font-black text-emerald-300">0 ułożonych</span>
+        </div>
+      </div>
+
+      <!-- Odznaki -->
+      <div class="glass rounded-3xl p-4 mb-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-extrabold text-white">Odznaki</h3>
+          <span id="badgeCountLabel" class="text-xs font-bold text-indigo-300">0 / 10</span>
+        </div>
+        <div id="badgesGrid" class="grid grid-cols-2 gap-2.5"></div>
+      </div>
+
+      <button type="button" onclick="confirmResetProgress()" class="btn-arcade w-full py-3.5 rounded-2xl glass border border-rose-500/30 text-rose-400 font-bold text-sm">
+        🗑️ Wyzeruj wszystkie postępy
+      </button>
+    </section>
+    </main>
+
+  </div>
+
+  <!-- DOLNA NAWIGACJA (6 zakładek dopasowanych pod telefon) -->
+  <nav aria-label="Główna nawigacja" class="fixed bottom-0 left-0 right-0 z-40 px-2.5 pb-3 pt-1 pointer-events-none">
+    <div class="max-w-md mx-auto glass-strong rounded-3xl p-1.5 grid grid-cols-6 gap-0.5 shadow-2xl shadow-black/60 pointer-events-auto border border-white/10">
+      <button type="button" onclick="switchTab('cards')" data-tab="cards" aria-current="page" class="nav-tab active flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-white bg-indigo-500/25 transition-all">
+        <span class="text-base leading-none">🗂️</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Fiszki</span>
+      </button>
+      <button type="button" onclick="switchTab('games')" data-tab="games" class="nav-tab flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-slate-400 transition-all">
+        <span class="text-base leading-none">🎮</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Gry</span>
+      </button>
+      <button type="button" onclick="switchTab('quiz')" data-tab="quiz" class="nav-tab flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-slate-400 transition-all">
+        <span class="text-base leading-none">⚡</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Test</span>
+      </button>
+      <button type="button" onclick="switchTab('ranking')" data-tab="ranking" class="nav-tab flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-slate-400 transition-all">
+        <span class="text-base leading-none">🏅</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Ranking</span>
+      </button>
+      <button type="button" onclick="switchTab('dict')" data-tab="dict" class="nav-tab flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-slate-400 transition-all">
+        <span class="text-base leading-none">📖</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Słownik</span>
+      </button>
+      <button type="button" onclick="switchTab('profile')" data-tab="profile" class="nav-tab flex flex-col items-center justify-center py-2 px-0.5 rounded-2xl text-slate-400 transition-all">
+        <span class="text-base leading-none">👤</span>
+        <span class="text-[10px] font-bold mt-1 leading-none">Profil</span>
+      </button>
+    </div>
+  </nav>
+
+<script>
+/* ============================================================================
+   🔑 0. KONFIGURACJA SUPABASE — TUTAJ WKLEJ SWÓJ PROJECT URL I KLUCZ API!
+   ----------------------------------------------------------------------------
+   JAK PODŁĄCZYĆ PRAWDZIWĄ BAZĘ SQL W SUPABASE (dla GitHub Pages):
+   1. Załóż projekt na https://supabase.com
+   2. Otwórz SQL Editor -> wklej i uruchom plik `supabase_schema.sql`
+   3. W Authentication -> Providers -> Email wyłącz "Confirm email"
+      (dzięki temu logowanie samym loginem działa od razu bez klikania linku).
+   4. Wejdź w Project Settings -> API i wklej poniżej:
+      - Project URL           -> SUPABASE_CONFIG.url
+      - anon / publishable    -> SUPABASE_CONFIG.anonKey
+      ⚠️ NIGDY nie wklejaj tajnego klucza `service_role` do kodu HTML/JS!
+      Bezpieczeństwo w przeglądarce gwarantują polityki RLS z `supabase_schema.sql`.
+   ============================================================================ */
+const SUPABASE_CONFIG = {
+  url: "TUTAJ_WKLEJ_PROJECT_URL",      // <--- WKLEJ TU Project URL, np. "https://abcxyz.supabase.co"
+  anonKey: "TUTAJ_WKLEJ_ANON_KEY"      // <--- WKLEJ TU publiczny klucz API (anon / publishable)
+};
+
+const SyncCore = window.FiszkiSyncCore;
+
+/* ============================================================================
+   1. BAZA DZIAŁÓW I LEKCJI (CURRICULUM)
+   ============================================================================ */
+const CURRICULUM = [
+  {
+    id: "dzial-5",
+    name: "Dział: Kapitel 5 – Gesundheit",
+    subtitle: "Zdrowie, lekarz, lekarstwa i wypadki w domu",
+    icon: "🩺",
+    lessons: [
+      {
+        id: "k5-l1",
+        shortName: "Lektion 1",
+        name: "Lekcja 1: Dolegliwości i choroby",
+        deName: "Beschwerden und Krankheiten",
+        words: [
+          { id: 1,  pl: "bóle brzucha", de: "die Bauchschmerzen", pluralOnly: true },
+          { id: 2,  pl: "przeziębienie", de: "die Erkältung, -en" },
+          { id: 3,  pl: "gorączka", de: "das Fieber" },
+          { id: 4,  pl: "grypa", de: "die Grippe, -n" },
+          { id: 5,  pl: "kaszel", de: "der Husten" },
+          { id: 6,  pl: "bóle głowy", de: "die Kopfschmerzen", pluralOnly: true },
+          { id: 7,  pl: "katar", de: "der Schnupfen" },
+          { id: 8,  pl: "odpoczywać", de: "sich erholen" },
+          { id: 9,  pl: "przeziębić się", de: "sich erkälten" },
+          { id: 10, pl: "czuć się", de: "sich fühlen" },
+          { id: 11, pl: "boleć", de: "weh|tun" },
+          { id: 12, pl: "iść do apteki", de: "in die Apotheke gehen" },
+          { id: 13, pl: "jechać do lekarza", de: "zum Arzt fahren" },
+          { id: 14, pl: "skręcić nogę", de: "mit dem Fuß um|knicken" },
+          { id: 15, pl: "zażywać lekarstwa", de: "Medikamente ein|nehmen" },
+          { id: 16, pl: "spaść z krzesła", de: "vom Stuhl fallen" },
+          { id: 17, pl: "Przykro mi.", de: "Es tut mir leid." },
+          { id: 18, pl: "Szybkiego powrotu do zdrowia!", de: "Gute Besserung!" },
+          { id: 19, pl: "Szkoda.", de: "Das ist ja schade!" }
+        ]
+      },
+      {
+        id: "k5-l2",
+        shortName: "Lektion 2",
+        name: "Lekcja 2: U lekarza",
+        deName: "Beim Arzt",
+        words: [
+          { id: 20, pl: "antybiotyk", de: "das Antibiotikum, Antibiotika" },
+          { id: 21, pl: "lekarz", de: "der Arzt, -̈e" },
+          { id: 22, pl: "zwolnienie lekarskie", de: "das Attest, -e" },
+          { id: 23, pl: "diagnoza", de: "die Diagnose, -n" },
+          { id: 24, pl: "usprawiedliwienie", de: "die Entschuldigung, -en" },
+          { id: 25, pl: "karta zdrowia", de: "die Gesundheitskarte, -n" },
+          { id: 26, pl: "zapalenie gardła", de: "die Halsentzündung, -en" },
+          { id: 27, pl: "bóle gardła", de: "die Halsschmerzen", pluralOnly: true },
+          { id: 28, pl: "lekarz rodzinny", de: "der Hausarzt, -̈e" },
+          { id: 29, pl: "gabinet lekarski", de: "die Praxis, Praxen" },
+          { id: 30, pl: "recepta", de: "das Rezept, -e" },
+          { id: 31, pl: "syrop", de: "der Sirup, -e / -s" },
+          { id: 32, pl: "godziny przyjęć", de: "die Sprechstunde, -n" },
+          { id: 33, pl: "tabletka", de: "die Tablette, -n" },
+          { id: 34, pl: "termin", de: "der Termin, -e" },
+          { id: 35, pl: "rozbierać się", de: "sich frei|machen" },
+          { id: 36, pl: "badać", de: "untersuchen" },
+          { id: 37, pl: "przepisywać (receptę)", de: "verschreiben" },
+          { id: 38, pl: "zwolnienie lekarskie do szkoły", de: "ein Attest für die Schule" },
+          { id: 39, pl: "przyjść do kontroli", de: "zur Kontrolle kommen" },
+          { id: 40, pl: "przyjść na wizytę", de: "in die Sprechstunde kommen" },
+          { id: 41, pl: "umówić termin", de: "einen Termin aus|machen" }
+        ]
+      },
+      {
+        id: "k5-l3",
+        shortName: "Lektion 3",
+        name: "Lekcja 3: Lekarstwa",
+        deName: "Medikamente",
+        words: [
+          { id: 42, pl: "saszetka z lekiem", de: "der Beutel, -" },
+          { id: 43, pl: "lekarstwo", de: "das Medikament, -e" },
+          { id: 44, pl: "krople do nosa", de: "die Nasentropfen", pluralOnly: true },
+          { id: 45, pl: "proszek", de: "das Pulver, -" },
+          { id: 46, pl: "tabletka przeciwbólowa", de: "die Schmerztablette, -n" },
+          { id: 47, pl: "kropla", de: "der Tropfen, -" },
+          { id: 48, pl: "rozpuszczać", de: "auf|lösen" },
+          { id: 49, pl: "dawkować", de: "dosieren" },
+          { id: 50, pl: "ssać", de: "lutschen" },
+          { id: 51, pl: "połykać", de: "schlucken" },
+          { id: 52, pl: "bez recepty", de: "rezeptfrei" },
+          { id: 53, pl: "raz", de: "einmal" },
+          { id: 54, pl: "trzy razy dziennie", de: "dreimal täglich" },
+          { id: 55, pl: "co cztery godziny", de: "alle vier Stunden" },
+          { id: 56, pl: "przed jedzeniem", de: "vor dem Essen" },
+          { id: 57, pl: "po jedzeniu", de: "nach dem Essen" },
+          { id: 58, pl: "tabletki na grypę", de: "Tabletten gegen Grippe" }
+        ]
+      },
+      {
+        id: "k5-l4",
+        shortName: "Lektion 4",
+        name: "Lekcja 4: Wypadki w domu",
+        deName: "Unfälle zu Hause",
+        words: [
+          { id: 59, pl: "ręka", de: "der Arm, -e" },
+          { id: 60, pl: "krew", de: "das Blut" },
+          { id: 61, pl: "palec", de: "der Finger, -" },
+          { id: 62, pl: "nóż", de: "das Messer, -" },
+          { id: 63, pl: "nieszczęście", de: "das Unglück, -e" },
+          { id: 64, pl: "pech", de: "das Pech" },
+          { id: 65, pl: "uważać", de: "auf|passen" },
+          { id: 66, pl: "poślizgnąć się", de: "aus|rutschen" },
+          { id: 67, pl: "śpieszyć się", de: "sich beeilen" },
+          { id: 68, pl: "krwawić", de: "bluten" },
+          { id: 69, pl: "brać prysznic", de: "duschen" },
+          { id: 70, pl: "koncentrować się", de: "sich konzentrieren" },
+          { id: 71, pl: "wydarzyć się", de: "passieren" },
+          { id: 72, pl: "spadać", de: "runter|fallen" },
+          { id: 73, pl: "zaciąć się", de: "sich schneiden" },
+          { id: 74, pl: "wylewać", de: "schütten" },
+          { id: 75, pl: "poparzyć się", de: "sich verbrennen" },
+          { id: 76, pl: "niebezpieczny", de: "gefährlich" },
+          { id: 77, pl: "ostry", de: "scharf" },
+          { id: 78, pl: "mocny", de: "stark" },
+          { id: 79, pl: "głęboki", de: "tief" },
+          { id: 80, pl: "ostrożny", de: "vorsichtig" },
+          { id: 81, pl: "spaść z krzesła", de: "vom Stuhl runter|fallen" },
+          { id: 82, pl: "stanąć na krzesło", de: "sich auf einen Stuhl stellen" },
+          { id: 83, pl: "zaciąć się głęboko", de: "sich tief schneiden" },
+          { id: 84, pl: "Uwaga!", de: "Vorsicht!" },
+          { id: 85, pl: "Bądź ostrożny!", de: "Sei vorsichtig!" }
+        ]
+      }
+    ]
+  }
+];
+
+// Automatyczne spłaszczenie wszystkich działów i lekcji do płaskiej listy słówek
+const ALL_WORDS = [];
+CURRICULUM.forEach(ch => {
+  ch.lessons.forEach(les => {
+    les.words.forEach(w => {
+      ALL_WORDS.push({
+        ...w,
+        chapterId: ch.id,
+        chapterName: ch.name,
+        lessonId: les.id,
+        lessonName: les.name,
+        lessonShort: les.shortName
+      });
+    });
+  });
+});
+
+function getWordsByScope(scope) {
+  if (!scope || scope === "all") return [...ALL_WORDS];
+  if (scope === "hard") return ALL_WORDS.filter(w => state.hard.includes(w.id));
+  if (scope === "unlearned") return ALL_WORDS.filter(w => !state.mastered.includes(w.id));
+  if (scope.startsWith("chapter:")) {
+    const chId = scope.slice(8);
+    return ALL_WORDS.filter(w => w.chapterId === chId);
+  }
+  if (scope.startsWith("lesson:")) {
+    const lId = scope.slice(7);
+    return ALL_WORDS.filter(w => w.lessonId === lId);
+  }
+  return [...ALL_WORDS];
+}
+
+const RANKS = SyncCore.RANKS;
+
+const BADGES_DEF = [
+  { id: "first10",   icon: "🌱", name: "Pierwsza Dycha",      desc: "Opanuj 10 słówek w fiszkach" },
+  { id: "halfway",   icon: "🔥", name: "Półmetek",            desc: "Opanuj połowę dostępnych słówek" },
+  { id: "masterAll", icon: "👑", name: "Król Słówek",         desc: "Opanuj wszystkie słówka z bazy!" },
+  { id: "quizPro",   icon: "🎓", name: "Piątkowy Uczeń",      desc: "Zdobądź min. 90% w Teście" },
+  { id: "article15", icon: "🎯", name: "Snajper Rodzajników", desc: "Zdobądź 15+ pkt w Der/Die/Das" },
+  { id: "matchFast", icon: "⚡", name: "Szybkie Palce",       desc: "Ukończ Łączenie Par poniżej 45s" },
+  { id: "speed20",   icon: "☄️", name: "Refleks Mistrza",     desc: "Zdobądź 20+ pkt w Szybkiej Piłce" },
+  { id: "scramble10",icon: "🧩", name: "Architekt Zdań",      desc: "Ułóż 10 słówek w Układance" },
+  { id: "streak3",   icon: "📆", name: "3 Dni z Rzędu",       desc: "Utrzymaj serię nauki przez 3 dni" },
+  { id: "streak7",   icon: "🏆", name: "Tydzień Ognia",       desc: "Utrzymaj serię nauki przez 7 dni" }
+];
+
+/* ============================================================================
+   2. STAN APLIKACJI, CACHE localStorage ORAZ SILNIK CHMURY SUPABASE
+   ============================================================================ */
+const STORAGE_KEY_BASE = "deutsch_arcade_k5_v2";
+const PENDING_SYNC_KEY = "deutsch_arcade_pending_sync_v1";
+const DEMO_USERS_KEY = "deutsch_arcade_demo_users_v1";
+const DEMO_SESSION_KEY = "deutsch_arcade_demo_session_v1";
+const DEMO_LEADERBOARD_KEY = "deutsch_arcade_demo_lb_v1";
+
+let state = SyncCore.createDefaultState();
+
+// Stan sesji i synchronizacji
+let sbClient = null;
+const IS_CLOUD_ENABLED = SyncCore.isSupabaseConfigured(SUPABASE_CONFIG) && typeof window.supabase !== "undefined";
+let currentUser = null;      // { id, email, username, className } lub null (gość)
+let syncStatus = IS_CLOUD_ENABLED ? "idle" : "local"; // idle | syncing | synced | offline | error | local
+let lastSyncedAt = null;
+let syncDebounceTimer = null;
+let realtimeChannels = [];
+let leaderboardRows = [];
+let leaderboardSort = "xp";
+let leaderboardClassFilter = "ALL";
+let leaderboardLoading = false;
+
+function getCacheKeyForUser(userId) {
+  return userId ? `${STORAGE_KEY_BASE}_u_${userId}` : STORAGE_KEY_BASE;
+}
+
+function loadStateFromCache(userId) {
+  const key = getCacheKeyForUser(userId);
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...SyncCore.createDefaultState(),
+        ...parsed,
+        collapsedChapters: parsed.collapsedChapters || [],
+        records: { ...SyncCore.DEFAULT_RECORDS, ...(parsed.records || {}) }
+      };
+    }
+    if (!userId) {
+      const oldM = JSON.parse(localStorage.getItem("k5_mastered") || "[]");
+      const oldH = JSON.parse(localStorage.getItem("k5_hard") || "[]");
+      if (oldM.length || oldH.length) {
+        const migrated = SyncCore.createDefaultState();
+        migrated.mastered = oldM;
+        migrated.hard = oldH;
+        migrated.xp = oldM.length * 10;
+        return migrated;
+      }
+    }
+  } catch (e) {
+    console.warn("Błąd odczytu localStorage:", e);
+  }
+  return SyncCore.createDefaultState();
+}
+
+function persistStateToCache(userId, targetState) {
+  try {
+    localStorage.setItem(getCacheKeyForUser(userId), JSON.stringify(targetState));
+  } catch (e) {
+    console.warn("Błąd zapisu localStorage:", e);
+  }
+}
+
+function loadState() {
+  state = loadStateFromCache(currentUser ? currentUser.id : null);
+}
+
+/**
+ * Natychmiast zapisuje stan do localStorage (płynne działanie na telefonie),
+ * a następnie kolejkuje automatyczny zapis w chmurze Supabase (lub w cache demo).
+ */
+function saveState(options = {}) {
+  state.updatedAt = new Date().toISOString();
+  state.syncVersion = (Number(state.syncVersion) || 1) + 1;
+
+  // 1. Zawsze natychmiastowy zapis w localStorage jako cache i kopia offline
+  persistStateToCache(currentUser ? currentUser.id : null, state);
+  updateHeaderUI();
+
+  // 2. Jeśli użytkownik jest zalogowany -> automatyczny zapis w chmurze
+  if (currentUser && !options.skipCloud) {
+    try { localStorage.setItem(PENDING_SYNC_KEY, "1"); } catch (_) {}
+    if (options.immediate) {
+      clearTimeout(syncDebounceTimer);
+      pushProgressToCloud({ silent: true });
+    } else {
+      scheduleCloudSync();
+    }
+  }
+}
+
+function scheduleCloudSync() {
+  if (!currentUser) return;
+  if (!navigator.onLine && IS_CLOUD_ENABLED) {
+    setSyncStatus("offline");
+    return;
+  }
+  setSyncStatus("syncing");
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    pushProgressToCloud({ silent: true });
+  }, 750);
+}
+
+function setSyncStatus(nextStatus) {
+  syncStatus = nextStatus;
+  updateHeaderUI();
+  if (document.getElementById("view-profile").classList.contains("active")) {
+    renderProfileAccountCard();
+  }
+}
+
+/* ---------- BEZPIECZNE HASHOWANIE HASŁA DLA TRYBU LOKALNEGO DEMO ---------- */
+async function hashDemoPassword(password, salt) {
+  const raw = `${salt}:${password}`;
+  if (window.crypto && window.crypto.subtle) {
+    const data = new TextEncoder().encode(raw);
+    const hashBuf = await window.crypto.subtle.digest("SHA-256", data);
+    return Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  let h = 2166136261;
+  for (let i = 0; i < raw.length; i++) {
+    h ^= raw.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16);
+}
+
+/* ---------- DETERMINISTYCZNE DANE DEMO (TYLKO PRZED WKLEJENIEM KLUCZY SUPABASE) ---------- */
+function getDemoSeedLeaderboard() {
+  return [
+    { user_id: "demo-1", username: "Maja_8A",  class_name: "8A", xp: 1480, level: 5, streak: 9, best_streak: 11, mastered_count: 68, badges_count: 6, match_best_sec: 34, article_best: 21, speed_best: 26, scramble_total: 14, quiz_best_pct: 96, updated_at: new Date().toISOString() },
+    { user_id: "demo-2", username: "Kuba_8A",  class_name: "8A", xp: 940,  level: 4, streak: 5, best_streak: 7,  mastered_count: 51, badges_count: 4, match_best_sec: 41, article_best: 17, speed_best: 19, scramble_total: 9,  quiz_best_pct: 92, updated_at: new Date().toISOString() },
+    { user_id: "demo-3", username: "Zosia_8B", class_name: "8B", xp: 620,  level: 3, streak: 4, best_streak: 4,  mastered_count: 34, badges_count: 3, match_best_sec: 49, article_best: 12, speed_best: 15, scramble_total: 6,  quiz_best_pct: 84, updated_at: new Date().toISOString() },
+    { user_id: "demo-4", username: "Tomek_8A", class_name: "8A", xp: 310,  level: 2, streak: 2, best_streak: 3,  mastered_count: 19, badges_count: 1, match_best_sec: 58, article_best: 8,  speed_best: 11, scramble_total: 3,  quiz_best_pct: 72, updated_at: new Date().toISOString() },
+    { user_id: "demo-5", username: "Ola_8B",   class_name: "8B", xp: 190,  level: 2, streak: 1, best_streak: 2,  mastered_count: 12, badges_count: 1, match_best_sec: null, article_best: 6, speed_best: 9, scramble_total: 2, quiz_best_pct: 68, updated_at: new Date().toISOString() }
+  ];
+}
+
+function readDemoStore(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function writeDemoStore(key, val) {
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch (_) {}
+}
+
+function upsertDemoLeaderboardEntry(user, st) {
+  const entries = readDemoStore(DEMO_LEADERBOARD_KEY, getDemoSeedLeaderboard());
+  const rank = SyncCore.getRankInfo(st.xp).current;
+  const updated = {
+    user_id: user.id,
+    username: user.username,
+    class_name: user.className || "Klasa",
+    xp: st.xp,
+    level: rank.lv,
+    streak: SyncCore.getActiveStreakDisplay(st),
+    best_streak: st.bestStreak || 0,
+    mastered_count: st.mastered.length,
+    badges_count: st.badges.length,
+    match_best_sec: st.records.matchBestSec,
+    article_best: st.records.articleBest || 0,
+    speed_best: st.records.speedBest || 0,
+    scramble_total: st.records.scrambleTotal || 0,
+    quiz_best_pct: st.records.quizBestPct,
+    updated_at: new Date().toISOString()
+  };
+  const idx = entries.findIndex(e => e.user_id === user.id);
+  if (idx >= 0) entries[idx] = updated;
+  else entries.push(updated);
+  writeDemoStore(DEMO_LEADERBOARD_KEY, entries);
+  leaderboardRows = entries;
+}
+
+/* ---------- INICJALIZACJA SUPABASE I AUTOMATYCZNE WZNAWIANIE SESJI ---------- */
+async function initCloudBackend() {
+  if (IS_CLOUD_ENABLED) {
+    sbClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storageKey: "fiszki_supabase_auth_v1"
+      }
+    });
+
+    const { data: { session } } = await sbClient.auth.getSession();
+    if (session && session.user) {
+      await hydrateSignedInSupabaseUser(session.user, { mergeGuest: false });
+    } else {
+      currentUser = null;
+      loadState();
+      refreshUIAll();
+    }
+
+    sbClient.auth.onAuthStateChange(async (event, sessionObj) => {
+      if (event === "SIGNED_IN" && sessionObj && sessionObj.user) {
+        if (!currentUser || currentUser.id !== sessionObj.user.id) {
+          await hydrateSignedInSupabaseUser(sessionObj.user, { mergeGuest: true });
+        }
+      } else if (event === "SIGNED_OUT") {
+        teardownRealtime();
+        currentUser = null;
+        loadState();
+        setSyncStatus("idle");
+        refreshUIAll();
+      }
+    });
+
+    subscribeLeaderboardRealtime();
+  } else {
+    // Tryb lokalny / demo (do czasu wklejenia kluczy Supabase)
+    const demoSession = readDemoStore(DEMO_SESSION_KEY, null);
+    if (demoSession && demoSession.id) {
+      currentUser = demoSession;
+      loadState();
+      upsertDemoLeaderboardEntry(currentUser, state);
+      setSyncStatus("local");
+    } else {
+      currentUser = null;
+      loadState();
+      setSyncStatus("local");
+    }
+    refreshUIAll();
+  }
+
+  await refreshLeaderboard(false);
+}
+
+async function hydrateSignedInSupabaseUser(authUser, options = {}) {
+  setSyncStatus("syncing");
+  const guestSnapshot = loadStateFromCache(null);
+  const hasGuestProgress = guestSnapshot.xp > 0 || guestSnapshot.mastered.length > 0 || guestSnapshot.hard.length > 0;
+
+  let profile = null;
+  try {
+    const { data: profRow } = await sbClient
+      .from("profiles")
+      .select("id, username, class_name")
+      .eq("id", authUser.id)
+      .maybeSingle();
+    profile = profRow;
+  } catch (e) {
+    console.warn("Błąd pobierania profilu:", e);
+  }
+
+  const fallbackName = (authUser.user_metadata && authUser.user_metadata.username) ||
+    (authUser.email ? authUser.email.split("@")[0] : "Uczeń");
+  const fallbackClass = (authUser.user_metadata && authUser.user_metadata.class_name) || "Klasa";
+
+  currentUser = {
+    id: authUser.id,
+    email: authUser.email || "",
+    username: (profile && profile.username) || fallbackName,
+    className: (profile && profile.class_name) || fallbackClass
+  };
+
+  // Upewnij się, że wiersz profilu istnieje (na wypadek opóźnienia triggera)
+  if (!profile) {
+    try {
+      await sbClient.from("profiles").upsert({
+        id: currentUser.id,
+        username: currentUser.username,
+        username_lower: currentUser.username.toLowerCase(),
+        class_name: currentUser.className
+      }, { onConflict: "id" });
+    } catch (_) {}
+  }
+
+  const cachedUserState = loadStateFromCache(currentUser.id);
+  let remoteState = null;
+
+  try {
+    const { data: progRow, error } = await sbClient
+      .from("user_progress")
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+    if (!error && progRow) {
+      remoteState = SyncCore.fromCloudProgressRow(progRow);
+    }
+  } catch (e) {
+    console.warn("Błąd pobierania postępów z chmury:", e);
+  }
+
+  // Połącz postępy z tego urządzenia (cache użytkownika + ewentualny dorobek gościa) z chmurą
+  let merged = SyncCore.mergeProgressStates(cachedUserState, remoteState, { mergeGuest: false });
+  if (options.mergeGuest && hasGuestProgress) {
+    merged = SyncCore.mergeProgressStates(guestSnapshot, merged, { mergeGuest: true });
+    // Wyczyść tymczasowy magazyn gościa po przeniesieniu na konto
+    try { localStorage.removeItem(STORAGE_KEY_BASE); } catch (_) {}
+  }
+
+  state = merged;
+  persistStateToCache(currentUser.id, state);
+  await pushProgressToCloud({ silent: true });
+  subscribeUserProgressRealtime(currentUser.id);
+  refreshUIAll();
+}
+
+async function pushProgressToCloud(options = {}) {
+  if (!currentUser) return false;
+
+  if (!IS_CLOUD_ENABLED) {
+    persistStateToCache(currentUser.id, state);
+    upsertDemoLeaderboardEntry(currentUser, state);
+    lastSyncedAt = new Date();
+    setSyncStatus("local");
+    if (document.getElementById("view-ranking").classList.contains("active")) {
+      renderLeaderboard();
+    }
+    if (!options.silent) showToast("Zapisano lokalnie (tryb podglądu)", "💾", "emerald");
+    return true;
+  }
+
+  if (!navigator.onLine) {
+    setSyncStatus("offline");
+    return false;
+  }
+
+  setSyncStatus("syncing");
+  try {
+    const payload = SyncCore.toCloudProgressRow(currentUser.id, state);
+    const { error } = await sbClient
+      .from("user_progress")
+      .upsert(payload, { onConflict: "user_id" });
+
+    if (error) throw error;
+
+    try { localStorage.removeItem(PENDING_SYNC_KEY); } catch (_) {}
+    lastSyncedAt = new Date();
+    setSyncStatus("synced");
+    if (!options.silent) showToast("Postępy zsynchronizowane z chmurą!", "☁️", "emerald");
+    return true;
+  } catch (err) {
+    console.warn("Błąd zapisu w Supabase:", err);
+    setSyncStatus(navigator.onLine ? "error" : "offline");
+    if (!options.silent) showToast("Zapisano lokalnie — ponowię synchronizację później", "⚠️", "rose");
+    return false;
+  }
+}
+
+async function pullProgressFromCloud(options = {}) {
+  if (!currentUser) return;
+  if (!IS_CLOUD_ENABLED) {
+    upsertDemoLeaderboardEntry(currentUser, state);
+    refreshUIAll();
+    if (!options.silent) showToast("Dane są aktualne (tryb lokalny)", "💾", "emerald");
+    return;
+  }
+  if (!navigator.onLine) {
+    setSyncStatus("offline");
+    if (!options.silent) showToast("Brak internetu — używasz kopii z urządzenia", "📴", "rose");
+    return;
+  }
+
+  setSyncStatus("syncing");
+  try {
+    const { data: progRow, error } = await sbClient
+      .from("user_progress")
+      .select("*")
+      .eq("user_id", currentUser.id)
+      .maybeSingle();
+
+    if (error) throw error;
+
+    const remoteState = SyncCore.fromCloudProgressRow(progRow);
+    const hasPendingLocal = localStorage.getItem(PENDING_SYNC_KEY) === "1";
+
+    if (remoteState) {
+      state = SyncCore.mergeProgressStates(state, remoteState, { mergeGuest: false });
+      persistStateToCache(currentUser.id, state);
+      refreshUIAll();
+    }
+
+    if (hasPendingLocal || !remoteState) {
+      await pushProgressToCloud({ silent: true });
+    } else {
+      lastSyncedAt = new Date();
+      setSyncStatus("synced");
+    }
+
+    if (!options.silent) showToast("Zsynchronizowano z chmurą!", "☁️", "emerald");
+  } catch (err) {
+    console.warn("Błąd pobierania z Supabase:", err);
+    setSyncStatus("error");
+    if (!options.silent) showToast("Nie udało się połączyć z chmurą", "⚠️", "rose");
+  }
+}
+
+function teardownRealtime() {
+  if (!sbClient) return;
+  realtimeChannels.forEach(ch => {
+    try { sbClient.removeChannel(ch); } catch (_) {}
+  });
+  realtimeChannels = [];
+}
+
+function subscribeUserProgressRealtime(userId) {
+  if (!IS_CLOUD_ENABLED || !sbClient || !userId) return;
+  const ch = sbClient
+    .channel(`user-progress-${userId}`)
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "user_progress", filter: `user_id=eq.${userId}` },
+      (payload) => {
+        if (!payload.new) return;
+        const remote = SyncCore.fromCloudProgressRow(payload.new);
+        if (!remote) return;
+        // Ignoruj echa własnego zapisu o tej samej lub starszej wersji
+        if (remote.syncVersion <= state.syncVersion && remote.lastResetAt === state.lastResetAt) return;
+        state = SyncCore.mergeProgressStates(state, remote, { mergeGuest: false });
+        persistStateToCache(userId, state);
+        lastSyncedAt = new Date();
+        setSyncStatus("synced");
+        refreshUIAll();
+      }
+    )
+    .subscribe();
+  realtimeChannels.push(ch);
+}
+
+function subscribeLeaderboardRealtime() {
+  if (!IS_CLOUD_ENABLED || !sbClient) return;
+  const ch = sbClient
+    .channel("class-leaderboard-live")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "leaderboard_entries" },
+      () => {
+        refreshLeaderboard(false);
+      }
+    )
+    .subscribe();
+  realtimeChannels.push(ch);
+}
+
+/* ---------- OBSŁUGA KONTA: MODAL, LOGOWANIE, REJESTRACJA, WYLOGOWANIE ---------- */
+function onHeaderAccountClick() {
+  SFX.click();
+  if (currentUser) switchTab("profile");
+  else openAuthModal("login");
+}
+
+function openAuthModal(mode = "login") {
+  SFX.click();
+  setAuthModalMode(mode);
+  document.getElementById("authDemoHint").classList.toggle("hidden", IS_CLOUD_ENABLED);
+  document.getElementById("authLoginError").classList.add("hidden");
+  document.getElementById("authRegError").classList.add("hidden");
+  const modal = document.getElementById("authModal");
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+}
+
+function closeAuthModal() {
+  const modal = document.getElementById("authModal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+}
+
+function setAuthModalMode(mode) {
+  const isLogin = mode === "login";
+  document.getElementById("loginForm").classList.toggle("hidden", !isLogin);
+  document.getElementById("registerForm").classList.toggle("hidden", isLogin);
+
+  const tabLogin = document.getElementById("authTabLogin");
+  const tabReg = document.getElementById("authTabRegister");
+  tabLogin.setAttribute("aria-selected", String(isLogin));
+  tabReg.setAttribute("aria-selected", String(!isLogin));
+
+  tabLogin.className = isLogin
+    ? "py-2 rounded-xl text-xs font-extrabold text-white bg-indigo-500 shadow transition-all"
+    : "py-2 rounded-xl text-xs font-extrabold text-slate-400 transition-all";
+  tabReg.className = !isLogin
+    ? "py-2 rounded-xl text-xs font-extrabold text-white bg-emerald-600 shadow transition-all"
+    : "py-2 rounded-xl text-xs font-extrabold text-slate-400 transition-all";
+}
+
+function showAuthError(boxId, message) {
+  const box = document.getElementById(boxId);
+  box.textContent = message;
+  box.classList.remove("hidden");
+}
+
+function translateAuthError(err) {
+  const msg = String((err && err.message) || err || "");
+  if (/invalid login credentials/i.test(msg)) return "Nieprawidłowy login/e-mail lub hasło.";
+  if (/email not confirmed/i.test(msg)) return "Potwierdź adres e-mail klikając link wysłany na skrzynkę (lub wyłącz 'Confirm email' w ustawieniach Supabase).";
+  if (/user already registered/i.test(msg)) return "Konto z tym loginem lub adresem e-mail już istnieje.";
+  if (/password should be at least/i.test(msg)) return "Hasło musi mieć co najmniej 6 znaków.";
+  if (/rate limit/i.test(msg)) return "Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.";
+  return msg || "Wystąpił błąd połączenia. Spróbuj ponownie.";
+}
+
+async function handleLoginSubmit(e) {
+  e.preventDefault();
+  const identifier = document.getElementById("authLoginIdentifier").value.trim();
+  const password = document.getElementById("authLoginPassword").value;
+  const errId = "authLoginError";
+  document.getElementById(errId).classList.add("hidden");
+
+  const validation = SyncCore.validateAuthForm("login", { identifier, password });
+  if (!validation.valid) {
+    SFX.bad();
+    showAuthError(errId, validation.errors[0]);
+    return;
+  }
+
+  const btn = document.getElementById("authLoginSubmitBtn");
+  btn.disabled = true;
+  btn.textContent = "Logowanie...";
+
+  try {
+    const email = SyncCore.normalizeLoginToEmail(identifier);
+
+    if (IS_CLOUD_ENABLED) {
+      const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      if (data && data.user) {
+        await hydrateSignedInSupabaseUser(data.user, { mergeGuest: true });
+      }
+      closeAuthModal();
+      document.getElementById("authLoginPassword").value = "";
+      SFX.ok(3);
+      showToast(`Witaj z powrotem, ${currentUser.username}!`, "☁️", "emerald");
+    } else {
+      // Tryb lokalny demo
+      const users = readDemoStore(DEMO_USERS_KEY, []);
+      const found = users.find(u => u.email === email || u.usernameLower === identifier.toLowerCase());
+      if (!found) throw new Error("Nie znaleziono konta o tym loginie. Załóż nowe konto w zakładce Rejestracja.");
+      const hashed = await hashDemoPassword(password, found.id);
+      if (hashed !== found.passwordHash) throw new Error("Nieprawidłowy login/e-mail lub hasło.");
+
+      const guestSnapshot = loadStateFromCache(null);
+      currentUser = { id: found.id, email: found.email, username: found.username, className: found.className };
+      writeDemoStore(DEMO_SESSION_KEY, currentUser);
+
+      const userCached = loadStateFromCache(currentUser.id);
+      state = SyncCore.mergeProgressStates(guestSnapshot, userCached, { mergeGuest: true });
+      persistStateToCache(currentUser.id, state);
+      upsertDemoLeaderboardEntry(currentUser, state);
+
+      closeAuthModal();
+      document.getElementById("authLoginPassword").value = "";
+      refreshUIAll();
+      SFX.ok(3);
+      showToast(`Zalogowano jako ${currentUser.username}!`, "👤", "emerald");
+    }
+  } catch (err) {
+    SFX.bad();
+    showAuthError(errId, translateAuthError(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Zaloguj się";
+  }
+}
+
+async function handleRegisterSubmit(e) {
+  e.preventDefault();
+  const username = SyncCore.sanitizeUsername(document.getElementById("authRegUsername").value);
+  const className = document.getElementById("authRegClass").value.trim() || "Klasa";
+  const emailInput = document.getElementById("authRegEmail").value.trim();
+  const password = document.getElementById("authRegPassword").value;
+  const confirmPassword = document.getElementById("authRegConfirm").value;
+  const errId = "authRegError";
+  document.getElementById(errId).classList.add("hidden");
+
+  const validation = SyncCore.validateAuthForm("register", {
+    username, email: emailInput, className, password, confirmPassword
+  });
+  if (!validation.valid) {
+    SFX.bad();
+    showAuthError(errId, validation.errors[0]);
+    return;
+  }
+
+  const btn = document.getElementById("authRegSubmitBtn");
+  btn.disabled = true;
+  btn.textContent = "Tworzenie konta...";
+
+  try {
+    const authEmail = emailInput ? emailInput.toLowerCase() : SyncCore.normalizeLoginToEmail(username);
+
+    if (IS_CLOUD_ENABLED) {
+      // Sprawdź dostępność loginu przed rejestracją
+      const { data: available } = await sbClient.rpc("is_username_available", { p_username: username });
+      if (available === false) {
+        throw new Error("Ten login jest już zajęty. Wybierz inny nick.");
+      }
+
+      const { data, error } = await sbClient.auth.signUp({
+        email: authEmail,
+        password,
+        options: {
+          data: {
+            username,
+            class_name: className
+          }
+        }
+      });
+      if (error) throw error;
+
+      if (data && data.session && data.user) {
+        await hydrateSignedInSupabaseUser(data.user, { mergeGuest: true });
+        closeAuthModal();
+        document.getElementById("authRegPassword").value = "";
+        document.getElementById("authRegConfirm").value = "";
+        SFX.fanfare();
+        fireConfetti(65);
+        showToast(`Konto ${username} gotowe! Postępy zapisują się w chmurze.`, "☁️", "emerald");
+      } else {
+        closeAuthModal();
+        showModal({
+          icon: "📧",
+          title: "Sprawdź skrzynkę e-mail",
+          text: "Konto zostało utworzone! Kliknij link potwierdzający na e-mailu, a potem zaloguj się (w Supabase możesz też wyłączyć 'Confirm email', aby logowanie działało od razu).",
+          actions: [{ label: "OK", className: "btn-arcade flex-1 py-3 rounded-xl bg-indigo-500 text-white font-extrabold text-sm" }]
+        });
+      }
+    } else {
+      // Tryb lokalny demo
+      const users = readDemoStore(DEMO_USERS_KEY, []);
+      if (users.some(u => u.usernameLower === username.toLowerCase() || u.email === authEmail)) {
+        throw new Error("Ten login lub e-mail jest już zajęty.");
+      }
+      const newId = "local-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+      const passwordHash = await hashDemoPassword(password, newId);
+      const newUser = {
+        id: newId,
+        email: authEmail,
+        username,
+        usernameLower: username.toLowerCase(),
+        className,
+        passwordHash
+      };
+      users.push(newUser);
+      writeDemoStore(DEMO_USERS_KEY, users);
+
+      const guestSnapshot = loadStateFromCache(null);
+      currentUser = { id: newUser.id, email: newUser.email, username: newUser.username, className: newUser.className };
+      writeDemoStore(DEMO_SESSION_KEY, currentUser);
+
+      state = { ...SyncCore.createDefaultState(), ...guestSnapshot, updatedAt: new Date().toISOString() };
+      persistStateToCache(currentUser.id, state);
+      upsertDemoLeaderboardEntry(currentUser, state);
+
+      closeAuthModal();
+      document.getElementById("authRegPassword").value = "";
+      document.getElementById("authRegConfirm").value = "";
+      refreshUIAll();
+      SFX.fanfare();
+      fireConfetti(65);
+      showToast(`Witaj w klasie, ${username}!`, "🎉", "emerald");
+    }
+  } catch (err) {
+    SFX.bad();
+    showAuthError(errId, translateAuthError(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Załóż konto i synchronizuj";
+  }
+}
+
+function confirmSignOut() {
+  SFX.click();
+  showModal({
+    icon: "👋",
+    title: "Wylogować się?",
+    text: "Twoje postępy są bezpiecznie zapisane. Na innym urządzeniu wystarczy się zalogować, aby je odzyskać.",
+    actions: [
+      { label: "Anuluj", className: "btn-arcade flex-1 py-3 rounded-xl glass text-slate-300 font-bold text-sm" },
+      {
+        label: "Wyloguj",
+        className: "btn-arcade flex-1 py-3 rounded-xl bg-indigo-500 text-white font-extrabold text-sm",
+        onClick: async () => {
+          await pushProgressToCloud({ silent: true });
+          if (IS_CLOUD_ENABLED && sbClient) {
+            await sbClient.auth.signOut();
+            teardownRealtime();
+          } else {
+            try { localStorage.removeItem(DEMO_SESSION_KEY); } catch (_) {}
+          }
+          currentUser = null;
+          loadState();
+          setSyncStatus(IS_CLOUD_ENABLED ? "idle" : "local");
+          refreshUIAll();
+          showToast("Wylogowano. Możesz dalej uczyć się jako gość.", "👋");
+        }
+      }
+    ]
+  });
+}
+
+function openEditProfileModal() {
+  if (!currentUser) return;
+  SFX.click();
+  document.getElementById("editUsernameInput").value = currentUser.username || "";
+  document.getElementById("editClassInput").value = currentUser.className || "Klasa";
+  document.getElementById("editProfileError").classList.add("hidden");
+  const modal = document.getElementById("editProfileModal");
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+}
+
+function closeEditProfileModal() {
+  const modal = document.getElementById("editProfileModal");
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+}
+
+async function handleEditProfileSubmit(e) {
+  e.preventDefault();
+  if (!currentUser) return;
+  const newName = SyncCore.sanitizeUsername(document.getElementById("editUsernameInput").value);
+  const newClass = document.getElementById("editClassInput").value.trim() || "Klasa";
+  const errEl = document.getElementById("editProfileError");
+  errEl.classList.add("hidden");
+
+  if (newName.length < 2 || newName.length > 24 || !/^[a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _.-]+$/.test(newName)) {
+    errEl.textContent = "Nick musi mieć 2–24 znaki (litery, cyfry, spacje lub _ . -).";
+    errEl.classList.remove("hidden");
+    return;
+  }
+
+  const btn = document.getElementById("editProfileSaveBtn");
+  btn.disabled = true;
+  btn.textContent = "Zapisywanie...";
+
+  try {
+    if (IS_CLOUD_ENABLED && sbClient) {
+      const { error } = await sbClient
+        .from("profiles")
+        .update({
+          username: newName,
+          username_lower: newName.toLowerCase(),
+          class_name: newClass
+        })
+        .eq("id", currentUser.id);
+      if (error) {
+        if (error.code === "23505") throw new Error("Ten nick jest już zajęty przez innego ucznia.");
+        throw error;
+      }
+    } else {
+      const users = readDemoStore(DEMO_USERS_KEY, []);
+      if (users.some(u => u.id !== currentUser.id && u.usernameLower === newName.toLowerCase())) {
+        throw new Error("Ten nick jest już zajęty.");
+      }
+      const idx = users.findIndex(u => u.id === currentUser.id);
+      if (idx >= 0) {
+        users[idx].username = newName;
+        users[idx].usernameLower = newName.toLowerCase();
+        users[idx].className = newClass;
+        writeDemoStore(DEMO_USERS_KEY, users);
+      }
+      writeDemoStore(DEMO_SESSION_KEY, { ...currentUser, username: newName, className: newClass });
+    }
+
+    currentUser.username = newName;
+    currentUser.className = newClass;
+    if (!IS_CLOUD_ENABLED) upsertDemoLeaderboardEntry(currentUser, state);
+    closeEditProfileModal();
+    refreshUIAll();
+    await refreshLeaderboard(false);
+    SFX.ok(2);
+    showToast("Profil zaktualizowany!", "✨", "emerald");
+  } catch (err) {
+    SFX.bad();
+    errEl.textContent = err.message || "Nie udało się zapisać zmian.";
+    errEl.classList.remove("hidden");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Zapisz";
+  }
+}
+
+/* ---------- RANKING KLASY NA ŻYWO ---------- */
+async function refreshLeaderboard(showFeedback = false) {
+  leaderboardLoading = true;
+  if (IS_CLOUD_ENABLED && sbClient) {
+    try {
+      const { data, error } = await sbClient
+        .from("leaderboard_entries")
+        .select("*")
+        .order("xp", { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      leaderboardRows = data || [];
+      if (showFeedback) showToast("Ranking klasy odświeżony!", "🏅", "emerald");
+    } catch (err) {
+      console.warn("Błąd pobierania rankingu:", err);
+      if (showFeedback) showToast("Nie udało się odświeżyć rankingu", "⚠️", "rose");
+    }
+  } else {
+    leaderboardRows = readDemoStore(DEMO_LEADERBOARD_KEY, getDemoSeedLeaderboard());
+    if (currentUser) upsertDemoLeaderboardEntry(currentUser, state);
+    if (showFeedback) showToast("Ranking odświeżony!", "🏅", "emerald");
+  }
+  leaderboardLoading = false;
+  if (document.getElementById("view-ranking").classList.contains("active")) {
+    renderLeaderboard();
+  }
+}
+
+function setLeaderboardSort(sortBy) {
+  SFX.click();
+  leaderboardSort = sortBy;
+  document.querySelectorAll(".lb-sort-pill").forEach(btn => {
+    const active = btn.dataset.sort === sortBy;
+    btn.className = active
+      ? "lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 bg-indigo-500 text-white"
+      : "lb-sort-pill px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 glass text-slate-300";
+  });
+  renderLeaderboard();
+}
+
+function onLeaderboardClassChange() {
+  SFX.click();
+  leaderboardClassFilter = document.getElementById("rankingClassFilter").value;
+  renderLeaderboard();
+}
+
+function formatLeaderboardMetric(entry, sortBy) {
+  if (sortBy === "streak") return `🔥 ${entry.streak || 0} dni`;
+  if (sortBy === "mastered") return `✓ ${entry.mastered_count || 0}/${ALL_WORDS.length}`;
+  if (sortBy === "records") {
+    const parts = [];
+    if (entry.article_best) parts.push(`🎯${entry.article_best}`);
+    if (entry.speed_best) parts.push(`🔥${entry.speed_best}`);
+    if (entry.quiz_best_pct != null) parts.push(`⚡${entry.quiz_best_pct}%`);
+    return parts.length ? parts.join(" · ") : "Brak rekordów";
+  }
+  return `${entry.xp || 0} XP`;
+}
+
+function renderLeaderboard() {
+  const livePill = document.getElementById("rankingLivePill");
+  if (IS_CLOUD_ENABLED) {
+    livePill.textContent = "Na żywo";
+    livePill.className = "text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30";
+  } else {
+    livePill.textContent = "Podgląd lokalny";
+    livePill.className = "text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/30";
+  }
+
+  document.getElementById("rankingGuestBanner").classList.toggle("hidden", Boolean(currentUser));
+
+  // Zbuduj listę klas w selektorze
+  const classSelect = document.getElementById("rankingClassFilter");
+  const classes = Array.from(new Set(leaderboardRows.map(r => r.class_name).filter(Boolean))).sort();
+  const prevVal = leaderboardClassFilter;
+  classSelect.innerHTML = `<option value="ALL" class="bg-slate-900">Wszystkie klasy (${leaderboardRows.length})</option>` +
+    classes.map(cls => `<option value="${SyncCore.escapeHtml(cls)}" class="bg-slate-900">Klasa ${SyncCore.escapeHtml(cls)}</option>`).join("");
+  classSelect.value = classes.includes(prevVal) ? prevVal : "ALL";
+  leaderboardClassFilter = classSelect.value;
+
+  const sorted = SyncCore.sortLeaderboard(leaderboardRows, leaderboardSort, leaderboardClassFilter);
+  const podiumEl = document.getElementById("rankingPodium");
+  const listEl = document.getElementById("rankingList");
+  const myBarEl = document.getElementById("rankingMyRankBar");
+
+  if (sorted.length === 0) {
+    podiumEl.innerHTML = "";
+    myBarEl.classList.add("hidden");
+    listEl.innerHTML = `<div class="glass rounded-3xl p-6 text-center text-sm text-slate-400">Brak jeszcze uczniów w tym rankingu. Bądź pierwszy! 🚀</div>`;
+    return;
+  }
+
+  // Podium TOP 3 (kolejność wizualna: 2., 1., 3.)
+  const podiumOrder = [1, 0, 2];
+  const medals = ["🥇", "🥈", "🥉"];
+  const heights = ["min-h-[146px] border-amber-400/50 bg-amber-500/10", "min-h-[126px] border-slate-300/30", "min-h-[116px] border-orange-400/30"];
+
+  podiumEl.innerHTML = podiumOrder.map(idx => {
+    const entry = sorted[idx];
+    if (!entry) return `<div></div>`;
+    const isMe = currentUser && entry.user_id === currentUser.id;
+    const rankInfo = SyncCore.getRankInfo(entry.xp).current;
+    const safeName = SyncCore.escapeHtml(entry.username);
+    const safeClass = SyncCore.escapeHtml(entry.class_name || "Klasa");
+    const metric = SyncCore.escapeHtml(formatLeaderboardMetric(entry, leaderboardSort));
+
+    return `
+      <div class="glass rounded-2xl p-2.5 text-center flex flex-col items-center justify-between ${heights[idx]} ${isMe ? "ring-2 ring-indigo-400" : ""}">
+        <div class="text-xl leading-none">${medals[idx]}</div>
+        <div class="my-1">
+          <div class="text-lg leading-none mb-0.5">${rankInfo.emoji}</div>
+          <div class="text-xs font-black text-white truncate max-w-[96px]">${safeName}</div>
+          <div class="text-[10px] font-bold text-slate-400">${safeClass} • Lv.${entry.level || rankInfo.lv}</div>
+        </div>
+        <div class="text-[11px] font-extrabold text-cyan-300 bg-slate-900/70 px-2 py-0.5 rounded-full max-w-full truncate">${metric}</div>
+      </div>
+    `;
+  }).join("");
+
+  // Pasek pozycji zalogowanego ucznia
+  if (currentUser) {
+    const myIndex = sorted.findIndex(e => e.user_id === currentUser.id);
+    if (myIndex >= 0) {
+      const me = sorted[myIndex];
+      myBarEl.classList.remove("hidden");
+      myBarEl.innerHTML = `
+        <span class="font-bold text-indigo-200">Twoja pozycja: <b class="text-white">#${myIndex + 1}</b> z ${sorted.length}</span>
+        <span class="font-extrabold text-cyan-300">${SyncCore.escapeHtml(formatLeaderboardMetric(me, leaderboardSort))}</span>
+      `;
+    } else {
+      myBarEl.classList.add("hidden");
+    }
+  } else {
+    myBarEl.classList.add("hidden");
+  }
+
+  // Pełna lista rankingu
+  listEl.innerHTML = sorted.map((entry, idx) => {
+    const pos = idx + 1;
+    const isMe = currentUser && entry.user_id === currentUser.id;
+    const rankInfo = SyncCore.getRankInfo(entry.xp).current;
+    const safeName = SyncCore.escapeHtml(entry.username);
+    const safeClass = SyncCore.escapeHtml(entry.class_name || "Klasa");
+    const metric = SyncCore.escapeHtml(formatLeaderboardMetric(entry, leaderboardSort));
+    const subStats = `Lv.${entry.level || rankInfo.lv} • ✓ ${entry.mastered_count || 0} • 🔥 ${entry.streak || 0}d • 🏅 ${entry.badges_count || 0}`;
+
+    return `
+      <div class="glass rounded-2xl px-3.5 py-3 flex items-center justify-between gap-2.5 ${isMe ? "border-indigo-400/60 bg-indigo-500/15" : ""}">
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-7 text-center font-black text-sm ${pos <= 3 ? "text-amber-300" : "text-slate-400"} shrink-0">
+            ${pos <= 3 ? medals[pos - 1] : "#" + pos}
+          </div>
+          <div class="w-9 h-9 rounded-xl bg-slate-900/70 border border-white/10 flex items-center justify-center text-lg shrink-0">
+            ${rankInfo.emoji}
+          </div>
+          <div class="min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="font-extrabold text-sm text-white truncate">${safeName}</span>
+              ${isMe ? `<span class="text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md bg-indigo-500 text-white shrink-0">Ty</span>` : ""}
+              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-white/10 text-slate-300 shrink-0">${safeClass}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate mt-0.5">${subStats}</div>
+          </div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="text-xs font-black text-cyan-300">${metric}</div>
+          ${entry.match_best_sec ? `<div class="text-[10px] text-slate-400">🔗 ${entry.match_best_sec}s</div>` : ""}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+/* ============================================================================
+   3. SILNIK DŹWIĘKOWY (Tone.js) I LEKTOR NIEMIECKI (SpeechSynthesis)
+   ============================================================================ */
+let audioReady = false;
+let mainSynth = null;
+let polySynth = null;
+
+async function ensureAudio() {
+  if (!state.soundEnabled) return false;
+  try {
+    if (typeof Tone === "undefined") return false;
+    if (Tone.context.state !== "running") await Tone.start();
+    if (!audioReady) {
+      mainSynth = new Tone.Synth({
+        oscillator: { type: "triangle" },
+        envelope: { attack: 0.008, decay: 0.14, sustain: 0.05, release: 0.25 }
+      }).toDestination();
+      mainSynth.volume.value = -8;
+
+      polySynth = new Tone.PolySynth(Tone.Synth, {
+        oscillator: { type: "sine" },
+        envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.45 }
+      }).toDestination();
+      polySynth.volume.value = -10;
+      audioReady = true;
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+const SFX = {
+  async click() {
+    if (!(await ensureAudio())) return;
+    try { mainSynth.triggerAttackRelease("G5", "64n"); } catch(e){}
+  },
+  async flip() {
+    if (!(await ensureAudio())) return;
+    try {
+      const now = Tone.now();
+      mainSynth.triggerAttackRelease("D5", "32n", now);
+      mainSynth.triggerAttackRelease("F#5", "32n", now + 0.045);
+    } catch(e){}
+  },
+  async ok(combo = 1) {
+    if (!(await ensureAudio())) return;
+    try {
+      const notes = ["C5", "D5", "E5", "G5", "A5", "C6", "D6", "E6"];
+      const idx = Math.min(Math.max(0, combo - 1), notes.length - 2);
+      const now = Tone.now();
+      mainSynth.triggerAttackRelease(notes[idx], "16n", now);
+      mainSynth.triggerAttackRelease(notes[idx + 1], "16n", now + 0.07);
+    } catch(e){}
+  },
+  async bad() {
+    if (!(await ensureAudio())) return;
+    try {
+      const now = Tone.now();
+      mainSynth.triggerAttackRelease("E3", "16n", now);
+      mainSynth.triggerAttackRelease("C3", "8n", now + 0.09);
+    } catch(e){}
+  },
+  async fanfare() {
+    if (!(await ensureAudio())) return;
+    try {
+      const now = Tone.now();
+      polySynth.triggerAttackRelease(["C5", "E5"], "16n", now);
+      polySynth.triggerAttackRelease(["E5", "G5"], "16n", now + 0.1);
+      polySynth.triggerAttackRelease(["G5", "C6"], "8n", now + 0.2);
+      polySynth.triggerAttackRelease(["C5", "E5", "G5", "C6"], "4n", now + 0.32);
+    } catch(e){}
+  }
+};
+
+function cleanGermanForSpeech(de) {
+  return de.split(",")[0].replace(/\|/g, "").trim();
+}
+
+function speakGerman(deText) {
+  try {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(cleanGermanForSpeech(deText));
+    utter.lang = "de-DE";
+    utter.rate = 0.92;
+    window.speechSynthesis.speak(utter);
+  } catch (e) {}
+}
+
+/* ============================================================================
+   4. KONFETTI, TOASTY I CUSTOMOWY MODAL
+   ============================================================================ */
+const confettiCanvas = document.getElementById("confettiCanvas");
+const cCtx = confettiCanvas.getContext("2d");
+let confettiPieces = [];
+let confettiAnimId = null;
+
+function resizeConfettiCanvas() {
+  confettiCanvas.width = window.innerWidth;
+  confettiCanvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resizeConfettiCanvas);
+
+function fireConfetti(count = 75) {
+  const colors = ["#38bdf8", "#fb7185", "#4ade80", "#818cf8", "#fbbf24", "#ffffff"];
+  for (let i = 0; i < count; i++) {
+    confettiPieces.push({
+      x: window.innerWidth / 2 + (Math.random() - 0.5) * 160,
+      y: window.innerHeight * 0.42,
+      vx: (Math.random() - 0.5) * 14,
+      vy: Math.random() * -13 - 4,
+      size: Math.random() * 7 + 4,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      rot: Math.random() * Math.PI * 2,
+      vRot: (Math.random() - 0.5) * 0.25,
+      life: 110 + Math.random() * 40
+    });
+  }
+  if (!confettiAnimId) animateConfetti();
+}
+
+function animateConfetti() {
+  cCtx.clearRect(0, 0, confettiCanvas.width, confettiCanvas.height);
+  confettiPieces = confettiPieces.filter(p => p.life > 0);
+  confettiPieces.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.32;
+    p.vx *= 0.985;
+    p.rot += p.vRot;
+    p.life--;
+    cCtx.save();
+    cCtx.translate(p.x, p.y);
+    cCtx.rotate(p.rot);
+    cCtx.globalAlpha = Math.min(1, p.life / 30);
+    cCtx.fillStyle = p.color;
+    cCtx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.65);
+    cCtx.restore();
+  });
+  if (confettiPieces.length > 0) confettiAnimId = requestAnimationFrame(animateConfetti);
+  else confettiAnimId = null;
+}
+
+function showToast(msg, icon = "✨", tone = "indigo") {
+  const container = document.getElementById("toastContainer");
+  const el = document.createElement("div");
+  const borderCol = tone === "emerald" ? "border-emerald-400/50" : tone === "rose" ? "border-rose-400/50" : "border-indigo-400/50";
+  el.className = `glass-strong ${borderCol} rounded-2xl px-4 py-3 text-sm font-bold text-white shadow-xl flex items-center gap-2.5 animate-pop`;
+  el.innerHTML = `<span class="text-lg">${SyncCore.escapeHtml(icon)}</span><span>${SyncCore.escapeHtml(msg)}</span>`;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity 0.3s, transform 0.3s";
+    el.style.opacity = "0";
+    el.style.transform = "translateY(-10px)";
+    setTimeout(() => el.remove(), 300);
+  }, 2400);
+}
+
+function showModal({ icon = "ℹ️", title, text, actions }) {
+  document.getElementById("modalIcon").innerText = icon;
+  document.getElementById("modalTitle").innerText = title;
+  document.getElementById("modalText").innerText = text;
+  const actBox = document.getElementById("modalActions");
+  actBox.innerHTML = "";
+  actions.forEach(a => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = a.className || "btn-arcade flex-1 py-3 rounded-xl glass text-white font-bold text-sm";
+    btn.innerText = a.label;
+    btn.onclick = () => {
+      closeModal();
+      if (a.onClick) a.onClick();
+    };
+    actBox.appendChild(btn);
+  });
+  const m = document.getElementById("customModal");
+  m.classList.remove("hidden");
+  m.classList.add("flex");
+}
+
+function closeModal() {
+  const m = document.getElementById("customModal");
+  m.classList.add("hidden");
+  m.classList.remove("flex");
+}
+
+/* ============================================================================
+   5. XP, POZIOMY, SERIA DNI (STREAK), ODZNAKI I FORMATOWANIE
+   ============================================================================ */
+function getRankInfo(xp) {
+  return SyncCore.getRankInfo(xp);
+}
+
+function touchStudyStreak() {
+  const res = SyncCore.calculateStreakUpdate(state);
+  state.streak = res.streak;
+  state.bestStreak = res.bestStreak;
+  state.lastStudyDate = res.lastStudyDate;
+  if (res.incremented && res.streak >= 2) {
+    showToast(`Seria nauki: ${res.streak} dni z rzędu!`, "🔥", "emerald");
+  }
+}
+
+function awardXP(amount, options = {}) {
+  if (amount <= 0) return;
+  const beforeLv = getRankInfo(state.xp).current.lv;
+  state.xp += amount;
+  touchStudyStreak();
+  const after = getRankInfo(state.xp).current;
+  saveState({ immediate: Boolean(options.immediate) });
+
+  if (after.lv > beforeLv) {
+    SFX.fanfare();
+    fireConfetti(90);
+    showToast(`AWANS! Poziom ${after.lv}: ${after.title} ${after.emoji}`, "🎉", "emerald");
+  }
+  checkBadges();
+}
+
+function unlockBadge(id) {
+  if (state.badges.includes(id)) return;
+  state.badges.push(id);
+  saveState({ immediate: true });
+  const def = BADGES_DEF.find(b => b.id === id);
+  if (def) {
+    SFX.fanfare();
+    fireConfetti(60);
+    showToast(`Nowa odznaka: ${def.name}!`, def.icon, "emerald");
+  }
+}
+
+function checkBadges() {
+  if (state.mastered.length >= 10) unlockBadge("first10");
+  if (state.mastered.length >= Math.ceil(ALL_WORDS.length / 2)) unlockBadge("halfway");
+  if (state.mastered.length >= ALL_WORDS.length) unlockBadge("masterAll");
+  if (state.records.quizBestPct !== null && state.records.quizBestPct >= 90) unlockBadge("quizPro");
+  if (state.records.articleBest >= 15) unlockBadge("article15");
+  if (state.records.matchBestSec !== null && state.records.matchBestSec <= 45) unlockBadge("matchFast");
+  if (state.records.speedBest >= 20) unlockBadge("speed20");
+  if (state.records.scrambleTotal >= 10) unlockBadge("scramble10");
+  if ((state.bestStreak || 0) >= 3) unlockBadge("streak3");
+  if ((state.bestStreak || 0) >= 7) unlockBadge("streak7");
+}
+
+function formatDe(text) {
+  if (text.startsWith("der ")) return `<span class="der">der</span> ` + text.slice(4);
+  if (text.startsWith("die ")) return `<span class="die">die</span> ` + text.slice(4);
+  if (text.startsWith("das ")) return `<span class="das">das</span> ` + text.slice(4);
+  return text;
+}
+
+function updateHeaderUI() {
+  const { current, next } = getRankInfo(state.xp);
+  const activeStreak = SyncCore.getActiveStreakDisplay(state);
+
+  document.getElementById("hdrLevelBadge").innerText = `Lv.${current.lv}`;
+  document.getElementById("hdrStreakBadge").innerText = `🔥 ${activeStreak}`;
+  document.getElementById("hdrXpText").innerText = `${state.xp} XP`;
+  let pct = 100;
+  if (next) pct = Math.min(100, Math.round(((state.xp - current.xp) / (next.xp - current.xp)) * 100));
+  document.getElementById("hdrXpBar").style.width = `${pct}%`;
+
+  document.getElementById("soundToggleBtn").innerText = state.soundEnabled ? "🔊" : "🔇";
+  document.getElementById("dirToggleBtn").innerText = state.plToDe ? "PL ➔ DE" : "DE ➔ PL";
+
+  const accIcon = document.getElementById("hdrAccountIcon");
+  const accLabel = document.getElementById("hdrAccountLabel");
+  if (currentUser) {
+    accLabel.textContent = currentUser.username;
+    if (syncStatus === "syncing") accIcon.textContent = "↻";
+    else if (syncStatus === "offline") accIcon.textContent = "📴";
+    else if (syncStatus === "error") accIcon.textContent = "⚠️";
+    else if (syncStatus === "synced") accIcon.textContent = "☁️";
+    else accIcon.textContent = "👤";
+  } else {
+    accIcon.textContent = "👤";
+    accLabel.textContent = "Zaloguj";
+  }
+
+  const autoBtn = document.getElementById("autoSpeakBtn");
+  if (autoBtn) {
+    autoBtn.classList.toggle("border-cyan-400", state.autoSpeak);
+    autoBtn.classList.toggle("bg-cyan-500/20", state.autoSpeak);
+  }
+}
+
+function refreshUIAll() {
+  updateHeaderUI();
+  renderCurriculumTree();
+  updateGamesMenuRecords();
+  if (document.getElementById("view-dict").classList.contains("active")) {
+    buildDictFilterPills();
+    renderDict();
+  }
+  if (document.getElementById("view-profile").classList.contains("active")) {
+    renderProfile();
+  }
+  if (document.getElementById("view-ranking").classList.contains("active")) {
+    renderLeaderboard();
+  }
+}
+
+function toggleSound() {
+  state.soundEnabled = !state.soundEnabled;
+  saveState();
+  if (state.soundEnabled) SFX.click();
+  showToast(state.soundEnabled ? "Dźwięki włączone" : "Dźwięki wyciszone", state.soundEnabled ? "🔊" : "🔇");
+}
+
+function toggleDirection() {
+  SFX.click();
+  state.plToDe = !state.plToDe;
+  saveState();
+  if (!document.getElementById("cardsStudyView").classList.contains("hidden") &&
+      document.getElementById("cardsRoundSummary").classList.contains("hidden")) {
+    renderFlashcard(true);
+  }
+  showToast(state.plToDe ? "Kierunek: Polski ➔ Niemiecki" : "Kierunek: Niemiecki ➔ Polski", "🔄");
+}
+
+function toggleAutoSpeak() {
+  SFX.click();
+  state.autoSpeak = !state.autoSpeak;
+  saveState();
+  showToast(state.autoSpeak ? "Auto-lektor włączony" : "Auto-lektor wyłączony", "🗣️");
+}
+
+/* ============================================================================
+   6. DYNAMICZNE LISTY WYBORU DZIAŁÓW I LEKCJI (DLA GIER, TESTU I SŁOWNIKA)
+   ============================================================================ */
+function populateScopeSelects() {
+  const buildOptions = () => {
+    let html = "";
+    if (CURRICULUM.length > 1) {
+      html += `<option value="all" class="bg-slate-900">Wszystkie działy (${ALL_WORDS.length} słówek)</option>`;
+    }
+    CURRICULUM.forEach(ch => {
+      const chWords = getWordsByScope(`chapter:${ch.id}`);
+      html += `<optgroup label="📁 ${ch.name}" class="bg-slate-900 text-slate-300">`;
+      html += `<option value="chapter:${ch.id}" class="bg-slate-900 text-white">📁 Cały dział: ${ch.name.replace(/^Dział:\s*/i, "")} (${chWords.length})</option>`;
+      ch.lessons.forEach(les => {
+        html += `<option value="lesson:${les.id}" class="bg-slate-900 text-white">&nbsp;&nbsp;📂 ${les.name} (${les.words.length})</option>`;
+      });
+      html += `</optgroup>`;
+    });
+    return html;
+  };
+
+  const optionsHtml = buildOptions();
+  document.getElementById("gameScopeSelect").innerHTML = optionsHtml;
+  document.getElementById("quizScopeSelect").innerHTML = optionsHtml;
+}
+
+/* ============================================================================
+   7. NAWIGACJA POMIĘDZY ZAKŁADKAMI
+   ============================================================================ */
+let activeTimers = [];
+
+function clearAllGameTimers() {
+  activeTimers.forEach(t => clearInterval(t));
+  activeTimers = [];
+}
+
+function switchTab(tabName) {
+  SFX.click();
+  clearAllGameTimers();
+
+  if (tabName !== "games") {
+    document.getElementById("activeGameArea").classList.add("hidden");
+    document.getElementById("gamesMenu").classList.remove("hidden");
+  }
+
+  document.querySelectorAll(".tab-view").forEach(v => v.classList.remove("active"));
+  document.getElementById("view-" + tabName).classList.add("active");
+
+  document.querySelectorAll(".nav-tab").forEach(btn => {
+    const isTarget = btn.dataset.tab === tabName;
+    btn.classList.toggle("active", isTarget);
+    btn.classList.toggle("text-white", isTarget);
+    btn.classList.toggle("bg-indigo-500/25", isTarget);
+    btn.classList.toggle("text-slate-400", !isTarget);
+    if (isTarget) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+
+  if (tabName === "cards")   { renderCurriculumTree(); }
+  if (tabName === "games")   { updateGamesMenuRecords(); }
+  if (tabName === "ranking") {
+    if (currentUser && syncDebounceTimer) {
+      clearTimeout(syncDebounceTimer);
+      syncDebounceTimer = null;
+      pushProgressToCloud({ silent: true }).then(() => refreshLeaderboard(false));
+    } else {
+      refreshLeaderboard(false);
+    }
+    renderLeaderboard();
+  }
+  if (tabName === "dict")    { buildDictFilterPills(); renderDict(); }
+  if (tabName === "profile") { renderProfile(); }
+}
+
+/* ============================================================================
+   8. MODUŁ 1: DRZEWO DZIAŁÓW -> LEKCJI ORAZ NAPRAWIONE FISZKI 3D
+   ============================================================================ */
+let activeCardScope = "all";
+let activeCardTitle = "";
+let cardDeck = [];
+let cardIdx = 0;
+let isCardFlipped = false;
+let flipLockUntil = 0;
+let roundNumber = 1;
+let roundResults = {};
+let isFullReviewMode = false;
+
+function renderCurriculumTree() {
+  const total = ALL_WORDS.length;
+  const masteredCount = state.mastered.length;
+  const hardCount = state.hard.length;
+  const unlearnedCount = total - masteredCount;
+
+  document.getElementById("globalMasteredStat").innerText = `✓ Opanowane: ${masteredCount} / ${total}`;
+  document.getElementById("globalHardStat").innerText = `🔥 Do powtórki: ${hardCount}`;
+  document.getElementById("globalProgressBar").style.width = `${Math.round((masteredCount / Math.max(1, total)) * 100)}%`;
+
+  document.getElementById("quickHardCount").innerText = `${hardCount} słówek`;
+  document.getElementById("quickUnlearnedCount").innerText = `${unlearnedCount} słówek`;
+
+  const chWord = CURRICULUM.length === 1 ? "dział" : (CURRICULUM.length < 5 ? "działy" : "działów");
+  document.getElementById("chaptersCountBadge").innerText = `${CURRICULUM.length} ${chWord}`;
+
+  const treeEl = document.getElementById("curriculumTree");
+  treeEl.innerHTML = CURRICULUM.map(ch => {
+    const chWords = getWordsByScope(`chapter:${ch.id}`);
+    const chDone = chWords.filter(w => state.mastered.includes(w.id)).length;
+    const chPct = Math.round((chDone / Math.max(1, chWords.length)) * 100);
+    const isCollapsed = state.collapsedChapters.includes(ch.id);
+
+    const lessonsHtml = ch.lessons.map(les => {
+      const lTotal = les.words.length;
+      const lDone = les.words.filter(w => state.mastered.includes(w.id)).length;
+      const lPct = Math.round((lDone / Math.max(1, lTotal)) * 100);
+      const safeTitle = les.name.replace(/'/g, "\\'");
+
+      return `
+        <button type="button" onclick="openFlashcardScope('lesson:${les.id}', '${safeTitle}')" class="btn-arcade w-full bg-slate-900/65 hover:bg-slate-800/80 border border-white/8 hover:border-indigo-400/40 rounded-2xl p-3 text-left flex items-center gap-3 transition-all">
+          <div class="w-10 h-10 rounded-xl bg-indigo-500/15 border border-indigo-400/25 flex items-center justify-center text-lg shrink-0">📂</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center justify-between gap-2">
+              <div class="text-sm font-extrabold text-white truncate">${les.name}</div>
+              <span class="text-[11px] font-bold ${lPct === 100 ? "text-emerald-400" : "text-cyan-300"} shrink-0">${lDone}/${lTotal}</span>
+            </div>
+            <div class="text-[11px] text-slate-400 truncate mt-0.5">${les.deName}</div>
+            <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden mt-2">
+              <div class="h-full ${lPct === 100 ? "bg-emerald-400" : "bg-gradient-to-r from-indigo-500 to-cyan-400"}" style="width: ${lPct}%"></div>
+            </div>
+          </div>
+          <span class="text-slate-500 text-sm font-bold">›</span>
+        </button>
+      `;
+    }).join("");
+
+    const safeChName = ch.name.replace(/'/g, "\\'");
+
+    return `
+      <div class="glass rounded-3xl p-4 border border-white/10">
+        <div class="flex items-start justify-between gap-2">
+          <button type="button" onclick="toggleChapterCollapse('${ch.id}')" aria-expanded="${!isCollapsed}" class="flex items-center gap-3 text-left flex-1 min-w-0">
+            <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-2xl shrink-0 shadow-lg shadow-indigo-500/25">
+              ${ch.icon}
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5">
+                <span class="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-indigo-500/25 text-indigo-300">Dział</span>
+                <span class="text-[11px] font-bold text-slate-400">${chDone}/${chWords.length} (${chPct}%)</span>
+              </div>
+              <h3 class="text-base font-black text-white truncate mt-0.5">${ch.name.replace(/^Dział:\s*/i, "")}</h3>
+              <p class="text-[11px] text-slate-400 truncate">${ch.subtitle}</p>
+            </div>
+          </button>
+
+          <button type="button" onclick="toggleChapterCollapse('${ch.id}')" aria-label="Zwiń lub rozwiń dział" class="btn-arcade w-8 h-8 rounded-xl bg-white/5 flex items-center justify-center text-xs text-slate-300 shrink-0 mt-1">
+            ${isCollapsed ? "▸" : "▾"}
+          </button>
+        </div>
+
+        <div class="mt-3 flex items-center gap-3">
+          <div class="flex-1 h-2 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full bg-gradient-to-r from-indigo-500 via-cyan-400 to-emerald-400 transition-all duration-500" style="width: ${chPct}%"></div>
+          </div>
+          <button type="button" onclick="openFlashcardScope('chapter:${ch.id}', '${safeChName}')" class="btn-arcade px-3 py-1.5 rounded-xl bg-indigo-500/25 border border-indigo-400/35 text-indigo-200 font-extrabold text-[11px] shrink-0">
+            Cały dział ▶
+          </button>
+        </div>
+
+        <div class="${isCollapsed ? "hidden" : "block"} mt-3.5 ml-4 pl-3.5 border-l-2 border-indigo-500/30 space-y-2">
+          ${lessonsHtml}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function toggleChapterCollapse(chId) {
+  SFX.click();
+  if (state.collapsedChapters.includes(chId)) {
+    state.collapsedChapters = state.collapsedChapters.filter(id => id !== chId);
+  } else {
+    state.collapsedChapters.push(chId);
+  }
+  saveState();
+  renderCurriculumTree();
+}
+
+function openFlashcardScope(scope, title, forceAll = false) {
+  SFX.click();
+  activeCardScope = scope;
+  activeCardTitle = title;
+
+  const allInScope = getWordsByScope(scope);
+  if (allInScope.length === 0) {
+    showToast("Ten folder jest pusty! Wszystkie słówka ogarnięte 🎉", "✨", "emerald");
+    return;
+  }
+
+  if (forceAll || scope === "hard" || scope === "unlearned") {
+    cardDeck = [...allInScope];
+    isFullReviewMode = forceAll;
+  } else {
+    const remaining = allInScope.filter(w => !state.mastered.includes(w.id));
+    if (remaining.length > 0 && remaining.length < allInScope.length) {
+      cardDeck = [...remaining];
+      isFullReviewMode = false;
+      showToast(`Wznawiam: zostało ${remaining.length} z ${allInScope.length} niezapamiętanych`, "🎯");
+    } else if (remaining.length === 0) {
+      cardDeck = [...allInScope];
+      isFullReviewMode = true;
+      showToast(`Wszystkie ${allInScope.length} opanowane! Tryb pełnej powtórki 🔄`, "👑", "emerald");
+    } else {
+      cardDeck = [...allInScope];
+      isFullReviewMode = false;
+    }
+  }
+
+  cardIdx = 0;
+  roundNumber = 1;
+  roundResults = {};
+
+  document.getElementById("activeScopeTitle").innerText = title;
+  document.getElementById("cardsRoundSummary").classList.add("hidden");
+  document.getElementById("cardsDeckStage").classList.remove("hidden");
+  document.getElementById("cardsFolderView").classList.add("hidden");
+  document.getElementById("cardsStudyView").classList.remove("hidden");
+  renderFlashcard(true);
+}
+
+function startNextRoundWithMissed() {
+  SFX.click();
+  const missed = cardDeck.filter(w => roundResults[w.id] !== true);
+  if (missed.length === 0) {
+    restartFullScope();
+    return;
+  }
+
+  cardDeck = missed;
+  cardIdx = 0;
+  roundNumber++;
+  roundResults = {};
+
+  document.getElementById("cardsRoundSummary").classList.add("hidden");
+  document.getElementById("cardsDeckStage").classList.remove("hidden");
+  renderFlashcard(true);
+}
+
+function restartFullScope() {
+  openFlashcardScope(activeCardScope, activeCardTitle, true);
+}
+
+function closeFlashcardStudy() {
+  SFX.click();
+  document.getElementById("cardsStudyView").classList.add("hidden");
+  document.getElementById("cardsFolderView").classList.remove("hidden");
+  renderCurriculumTree();
+}
+
+function shuffleFlashcards() {
+  if (!document.getElementById("cardsRoundSummary").classList.contains("hidden")) return;
+  SFX.flip();
+  cardDeck.sort(() => Math.random() - 0.5);
+  cardIdx = 0;
+  renderFlashcard(true);
+  showToast("Fiszki przetasowane!", "🔀");
+}
+
+function updateStudyStats() {
+  const totalInDeck = cardDeck.length;
+  const knownNow = cardDeck.filter(w => roundResults[w.id] === true).length;
+  const missedNow = cardDeck.filter(w => roundResults[w.id] === false).length;
+  const gradedCount = knownNow + missedNow;
+
+  document.getElementById("studyCounterText").innerText =
+    totalInDeck > 0 ? `Runda ${roundNumber} • Karta ${Math.min(cardIdx + 1, totalInDeck)} / ${totalInDeck}` : "Koniec rundy!";
+  document.getElementById("studyRoundStats").innerHTML =
+    `<span class="text-emerald-400">✓ ${knownNow}</span><span class="text-rose-400">✕ ${missedNow}</span>`;
+  document.getElementById("studyProgressBar").style.width =
+    totalInDeck > 0 ? `${Math.round((gradedCount / totalInDeck) * 100)}%` : "100%";
+
+  const partialBanner = document.getElementById("studyPartialBanner");
+  const allInScope = getWordsByScope(activeCardScope);
+  const isSpecialScope = activeCardScope === "hard" || activeCardScope === "unlearned";
+  if (!isSpecialScope && !isFullReviewMode && totalInDeck < allInScope.length) {
+    document.getElementById("studyPartialText").innerText =
+      `Tylko niezapamiętane (${totalInDeck} z ${allInScope.length})`;
+    partialBanner.classList.remove("hidden");
+  } else {
+    partialBanner.classList.add("hidden");
+  }
+}
+
+function renderFlashcard(instantReset = true) {
+  const cardEl = document.getElementById("flashcard");
+
+  if (instantReset) {
+    cardEl.style.transition = "none";
+    isCardFlipped = false;
+    cardEl.classList.remove("is-flipped");
+    void cardEl.offsetWidth;
+    cardEl.style.transition = "";
+  }
+
+  updateStudyStats();
+
+  if (cardDeck.length === 0) {
+    showRoundSummary();
+    return;
+  }
+
+  if (cardIdx < 0) cardIdx = 0;
+  if (cardIdx >= cardDeck.length) {
+    showRoundSummary();
+    return;
+  }
+
+  const item = cardDeck[cardIdx];
+  const statusMark = state.mastered.includes(item.id) ? " ✓" : state.hard.includes(item.id) ? " 🔥" : "";
+
+  document.getElementById("cardFrontBadge").innerText = `${item.lessonShort} • ${state.plToDe ? "Polski" : "Niemiecki"}${statusMark}`;
+  document.getElementById("cardBackBadge").innerText = state.plToDe ? "Tłumaczenie (DE)" : "Tłumaczenie (PL)";
+  document.getElementById("cardFrontSub").innerText = "Dotknij kartę, żeby zobaczyć tłumaczenie";
+
+  if (state.plToDe) {
+    document.getElementById("cardFrontWord").innerHTML = item.pl;
+    document.getElementById("cardBackWord").innerHTML = formatDe(item.de);
+    document.getElementById("cardAudioFront").style.display = "none";
+    document.getElementById("cardAudioBack").style.display = "flex";
+  } else {
+    document.getElementById("cardFrontWord").innerHTML = formatDe(item.de);
+    document.getElementById("cardBackWord").innerHTML = item.pl;
+    document.getElementById("cardAudioFront").style.display = "flex";
+    document.getElementById("cardAudioBack").style.display = "none";
+  }
+
+  let tips = [];
+  if (item.de.includes("|")) tips.push(`<span class="px-2.5 py-1 rounded-lg bg-cyan-500/15 text-cyan-300 text-[11px] font-bold">Czasownik rozdzielnie złożony</span>`);
+  if (item.pluralOnly) tips.push(`<span class="px-2.5 py-1 rounded-lg bg-pink-500/15 text-pink-300 text-[11px] font-bold">Tylko liczba mnoga (die)</span>`);
+  if (item.de.includes(",")) tips.push(`<span class="px-2.5 py-1 rounded-lg bg-indigo-500/15 text-indigo-300 text-[11px] font-bold">Po przecinku: liczba mnoga</span>`);
+  document.getElementById("cardTipArea").innerHTML = tips.join("");
+}
+
+function showRoundSummary() {
+  document.getElementById("cardsDeckStage").classList.add("hidden");
+  const summaryEl = document.getElementById("cardsRoundSummary");
+  summaryEl.classList.remove("hidden");
+
+  const knownCards = cardDeck.filter(w => roundResults[w.id] === true);
+  const missedCards = cardDeck.filter(w => roundResults[w.id] !== true);
+  const allInScope = getWordsByScope(activeCardScope);
+  const isSpecialScope = activeCardScope === "hard" || activeCardScope === "unlearned";
+
+  document.getElementById("studyCounterText").innerText = `Runda ${roundNumber} zakończona!`;
+  document.getElementById("studyRoundStats").innerHTML =
+    `<span class="text-emerald-400">✓ ${knownCards.length}</span><span class="text-rose-400">✕ ${missedCards.length}</span>`;
+  document.getElementById("studyProgressBar").style.width = "100%";
+  document.getElementById("studyPartialBanner").classList.add("hidden");
+
+  if (currentUser) pushProgressToCloud({ silent: true });
+
+  if (missedCards.length === 0) {
+    SFX.fanfare();
+    fireConfetti(85);
+    summaryEl.innerHTML = `
+      <div class="text-5xl mb-2">🎉</div>
+      <h3 class="text-2xl font-black text-white">Wszystko zapamiętane!</h3>
+      <p class="text-xs text-slate-300 mt-1 mb-5">
+        Runda ${roundNumber} zaliczona na 100% (${knownCards.length}/${cardDeck.length}). Tak trzymaj! 🔥
+      </p>
+      <div class="flex flex-col gap-2.5">
+        ${!isSpecialScope ? `
+          <button type="button" onclick="restartFullScope()" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-extrabold text-sm">
+            🔄 Powtórz całą lekcję jeszcze raz (${allInScope.length})
+          </button>
+        ` : ""}
+        <button type="button" onclick="closeFlashcardStudy()" class="btn-arcade w-full py-3 rounded-2xl glass text-slate-200 font-bold text-sm">
+          ← Wróć do działów
+        </button>
+      </div>
+    `;
+    return;
+  }
+
+  const missedListHtml = missedCards.map(m => `
+    <div class="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-between gap-2 text-xs text-left">
+      <div class="min-w-0">
+        <span class="font-bold text-white">${m.pl}</span>
+        <span class="text-slate-400"> ➔ </span>
+        <span>${formatDe(m.de)}</span>
+      </div>
+      <button type="button" onclick="speakGerman('${m.de.replace(/'/g, "\\'")}')" aria-label="Odsłuchaj wymowę" class="text-base shrink-0">🔊</button>
+    </div>
+  `).join("");
+
+  summaryEl.innerHTML = `
+    <div class="text-4xl mb-2">🔁</div>
+    <h3 class="text-xl font-black text-white">Koniec rundy ${roundNumber}</h3>
+    <p class="text-xs text-slate-400 mt-0.5 mb-4">Zostało jeszcze <b>${missedCards.length}</b> słówek do wykucia!</p>
+
+    <div class="grid grid-cols-2 gap-2.5 mb-4">
+      <div class="rounded-2xl p-3 bg-emerald-500/15 border border-emerald-400/30">
+        <div class="text-2xl font-black text-emerald-400">${knownCards.length}</div>
+        <div class="text-[11px] font-bold text-emerald-200">Zapamiętane ✓</div>
+      </div>
+      <div class="rounded-2xl p-3 bg-rose-500/15 border border-rose-400/30">
+        <div class="text-2xl font-black text-rose-400">${missedCards.length}</div>
+        <div class="text-[11px] font-bold text-rose-200">Do powtórki ✕</div>
+      </div>
+    </div>
+
+    <div class="max-h-44 overflow-y-auto flex flex-col gap-1.5 mb-5">
+      ${missedListHtml}
+    </div>
+
+    <div class="flex flex-col gap-2.5">
+      <button type="button" onclick="startNextRoundWithMissed()" class="btn-arcade w-full py-4 rounded-2xl bg-gradient-to-r from-rose-500 to-orange-500 text-white font-black text-sm shadow-lg shadow-rose-600/25">
+        🔥 Powtórz tylko niezapamiętane (${missedCards.length})
+      </button>
+      ${!isSpecialScope ? `
+        <button type="button" onclick="restartFullScope()" class="btn-arcade w-full py-3 rounded-2xl glass text-slate-300 font-bold text-xs">
+          🔄 Zacznij całą lekcję od nowa (${allInScope.length})
+        </button>
+      ` : ""}
+      <button type="button" onclick="closeFlashcardStudy()" class="btn-arcade w-full py-2.5 rounded-2xl text-slate-400 font-bold text-xs">
+        ← Wróć do działów
+      </button>
+    </div>
+  `;
+}
+
+function flipFlashcard() {
+  if (!cardDeck.length) return;
+  const now = Date.now();
+  if (now < flipLockUntil) return;
+  flipLockUntil = now + 260;
+
+  SFX.flip();
+  isCardFlipped = !isCardFlipped;
+  document.getElementById("flashcard").classList.toggle("is-flipped", isCardFlipped);
+
+  if (isCardFlipped && state.autoSpeak) {
+    speakGerman(cardDeck[cardIdx].de);
+  }
+}
+
+function speakCurrentCard(e) {
+  e.stopPropagation();
+  if (!cardDeck.length) return;
+  speakGerman(cardDeck[cardIdx].de);
+}
+
+function stepFlashcard(delta) {
+  if (!cardDeck.length) return;
+  SFX.click();
+  if (delta < 0) {
+    if (cardIdx > 0) {
+      cardIdx--;
+      renderFlashcard(true);
+    }
+  } else {
+    cardIdx++;
+    if (cardIdx >= cardDeck.length) showRoundSummary();
+    else renderFlashcard(true);
+  }
+}
+
+function gradeFlashcard(known) {
+  if (!cardDeck.length || cardIdx >= cardDeck.length) return;
+  const item = cardDeck[cardIdx];
+  roundResults[item.id] = known;
+
+  if (known) {
+    SFX.ok(2);
+    const wasNew = !state.mastered.includes(item.id);
+    if (wasNew) {
+      state.mastered.push(item.id);
+      awardXP(10);
+    } else {
+      awardXP(3);
+    }
+    state.hard = state.hard.filter(id => id !== item.id);
+  } else {
+    SFX.bad();
+    touchStudyStreak();
+    if (!state.hard.includes(item.id)) state.hard.push(item.id);
+    state.mastered = state.mastered.filter(id => id !== item.id);
+  }
+
+  saveState();
+  cardIdx++;
+  if (cardIdx >= cardDeck.length) {
+    showRoundSummary();
+  } else {
+    renderFlashcard(true);
+  }
+}
+
+(function initBulletproofCardGestures() {
+  const shell = document.getElementById("swipeShell");
+  const hintRight = document.getElementById("swipeHintRight");
+  const hintLeft = document.getElementById("swipeHintLeft");
+
+  let activePointerId = null;
+  let startX = 0, startY = 0, deltaX = 0;
+  let isSwiping = false;
+
+  shell.addEventListener("pointerdown", (e) => {
+    if (!e.isPrimary) return;
+    if (e.target.closest("button")) return;
+    activePointerId = e.pointerId;
+    startX = e.clientX;
+    startY = e.clientY;
+    deltaX = 0;
+    isSwiping = false;
+    shell.style.transition = "none";
+    try { shell.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+
+  shell.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== activePointerId) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    if (!isSwiping && Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      isSwiping = true;
+    }
+
+    if (isSwiping) {
+      deltaX = dx;
+      const rot = dx * 0.05;
+      shell.style.transform = `translate3d(${dx}px, 0, 0) rotate(${rot}deg)`;
+      const strength = Math.min(1, Math.abs(dx) / 110);
+      hintRight.style.opacity = dx > 0 ? strength : 0;
+      hintLeft.style.opacity = dx < 0 ? strength : 0;
+    }
+  });
+
+  function endGesture(e, cancelled) {
+    if (e.pointerId !== activePointerId) return;
+    activePointerId = null;
+    try { shell.releasePointerCapture(e.pointerId); } catch (_) {}
+
+    hintRight.style.opacity = 0;
+    hintLeft.style.opacity = 0;
+
+    if (cancelled) {
+      shell.style.transition = "transform 0.22s ease";
+      shell.style.transform = "";
+      return;
+    }
+
+    if (!isSwiping) {
+      shell.style.transform = "";
+      flipFlashcard();
+      return;
+    }
+
+    shell.style.transition = "transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)";
+    if (deltaX > 85) {
+      shell.style.transform = "translate3d(125%, 0, 0) rotate(14deg)";
+      setTimeout(() => {
+        shell.style.transition = "none";
+        shell.style.transform = "";
+        gradeFlashcard(true);
+      }, 210);
+    } else if (deltaX < -85) {
+      shell.style.transform = "translate3d(-125%, 0, 0) rotate(-14deg)";
+      setTimeout(() => {
+        shell.style.transition = "none";
+        shell.style.transform = "";
+        gradeFlashcard(false);
+      }, 210);
+    } else {
+      shell.style.transform = "";
+    }
+  }
+
+  shell.addEventListener("pointerup", (e) => endGesture(e, false));
+  shell.addEventListener("pointercancel", (e) => endGesture(e, true));
+})();
+
+/* ============================================================================
+   9. MODUŁ 2: STREFA GIER (4 MINIGRY ARCADOWE)
+   ============================================================================ */
+function updateGamesMenuRecords() {
+  document.getElementById("recMatch").innerText =
+    state.records.matchBestSec !== null ? `Rekord: ${state.records.matchBestSec}s` : "Brak rekordu";
+  document.getElementById("recArticle").innerText = `Rekord: ${state.records.articleBest}`;
+  document.getElementById("recSpeed").innerText = `Rekord: ${state.records.speedBest}`;
+  document.getElementById("recScramble").innerText = `Ułożone: ${state.records.scrambleTotal}`;
+}
+
+function openGameArena() {
+  clearAllGameTimers();
+  document.getElementById("gamesMenu").classList.add("hidden");
+  document.getElementById("activeGameArea").classList.remove("hidden");
+}
+
+function exitCurrentGame() {
+  SFX.click();
+  clearAllGameTimers();
+  document.getElementById("activeGameArea").classList.add("hidden");
+  document.getElementById("gamesMenu").classList.remove("hidden");
+  updateGamesMenuRecords();
+}
+
+/* ---------- GRA 1: ŁĄCZENIE PAR ---------- */
+function startMatchGame() {
+  SFX.click();
+  openGameArena();
+  const scope = document.getElementById("gameScopeSelect").value;
+  let pool = getWordsByScope(scope).sort(() => Math.random() - 0.5);
+  if (pool.length < 5) pool = [...ALL_WORDS].sort(() => Math.random() - 0.5);
+
+  const pairsPerWave = 5;
+  const totalWaves = Math.min(3, Math.floor(pool.length / pairsPerWave));
+  const waveWords = pool.slice(0, totalWaves * pairsPerWave);
+
+  let wave = 0, elapsed = 0, mistakes = 0, selectedTile = null, matchedInWave = 0, combo = 0;
+
+  const timerId = setInterval(() => {
+    elapsed++;
+    const el = document.getElementById("matchTimer");
+    if (el) el.innerText = `⏱️ ${elapsed}s`;
+  }, 1000);
+  activeTimers.push(timerId);
+
+  function renderWave() {
+    matchedInWave = 0;
+    selectedTile = null;
+    const chunk = waveWords.slice(wave * pairsPerWave, (wave + 1) * pairsPerWave);
+
+    document.getElementById("gameHudRight").innerHTML = `
+      <span class="px-2.5 py-1 rounded-full glass text-cyan-300">Fala ${wave + 1}/${totalWaves}</span>
+      <span id="matchTimer" class="px-2.5 py-1 rounded-full glass text-white">⏱️ ${elapsed}s</span>
+    `;
+
+    const leftCol = [...chunk].sort(() => Math.random() - 0.5);
+    const rightCol = [...chunk].sort(() => Math.random() - 0.5);
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="text-center mb-3">
+        <h3 class="font-extrabold text-base text-white">Połącz polskie z niemieckim</h3>
+        <p class="text-[11px] text-slate-400">Klikaj pasujące pary jak najszybciej!</p>
+      </div>
+      <div class="grid grid-cols-2 gap-2.5">
+        <div id="matchLeft" class="flex flex-col gap-2.5"></div>
+        <div id="matchRight" class="flex flex-col gap-2.5"></div>
+      </div>
+    `;
+
+    leftCol.forEach(w => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-arcade glass rounded-2xl p-3 min-h-[66px] text-xs sm:text-sm font-bold text-white flex items-center justify-center text-center border border-white/10 transition-all";
+      btn.dataset.id = w.id;
+      btn.dataset.side = "pl";
+      btn.innerText = w.pl;
+      btn.onclick = () => onTileTap(btn);
+      document.getElementById("matchLeft").appendChild(btn);
+    });
+
+    rightCol.forEach(w => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn-arcade glass rounded-2xl p-3 min-h-[66px] text-xs sm:text-sm font-bold text-white flex items-center justify-center text-center border border-white/10 transition-all";
+      btn.dataset.id = w.id;
+      btn.dataset.side = "de";
+      btn.innerHTML = formatDe(cleanGermanForSpeech(w.de));
+      btn.onclick = () => onTileTap(btn);
+      document.getElementById("matchRight").appendChild(btn);
+    });
+  }
+
+  function onTileTap(btn) {
+    if (btn.disabled) return;
+    if (selectedTile === btn) {
+      btn.classList.remove("ring-2", "ring-cyan-400", "bg-cyan-500/20");
+      selectedTile = null;
+      return;
+    }
+    if (!selectedTile) {
+      SFX.click();
+      selectedTile = btn;
+      btn.classList.add("ring-2", "ring-cyan-400", "bg-cyan-500/20");
+      return;
+    }
+    if (selectedTile.dataset.side === btn.dataset.side) {
+      SFX.click();
+      selectedTile.classList.remove("ring-2", "ring-cyan-400", "bg-cyan-500/20");
+      selectedTile = btn;
+      btn.classList.add("ring-2", "ring-cyan-400", "bg-cyan-500/20");
+      return;
+    }
+
+    const first = selectedTile;
+    selectedTile = null;
+    first.classList.remove("ring-2", "ring-cyan-400", "bg-cyan-500/20");
+
+    if (first.dataset.id === btn.dataset.id) {
+      combo++;
+      SFX.ok(combo);
+      [first, btn].forEach(el => {
+        el.disabled = true;
+        el.classList.add("bg-emerald-500/25", "border-emerald-400", "text-emerald-300", "opacity-40", "scale-95");
+      });
+      matchedInWave++;
+      if (matchedInWave === pairsPerWave) {
+        wave++;
+        if (wave < totalWaves) setTimeout(renderWave, 380);
+        else finishMatchGame();
+      }
+    } else {
+      combo = 0;
+      mistakes++;
+      SFX.bad();
+      [first, btn].forEach(el => {
+        el.classList.add("animate-shake", "border-rose-500", "bg-rose-500/25");
+        setTimeout(() => el.classList.remove("animate-shake", "border-rose-500", "bg-rose-500/25"), 400);
+      });
+    }
+  }
+
+  function finishMatchGame() {
+    clearAllGameTimers();
+    SFX.fanfare();
+    fireConfetti(70);
+    const xpEarned = Math.max(25, 80 - mistakes * 5);
+    const isRecord = state.records.matchBestSec === null || elapsed < state.records.matchBestSec;
+    if (isRecord) state.records.matchBestSec = elapsed;
+    awardXP(xpEarned, { immediate: true });
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="glass rounded-3xl p-6 text-center animate-pop">
+        <div class="text-5xl mb-2">🏁</div>
+        <h3 class="text-2xl font-black text-white">Wszystkie pary połączone!</h3>
+        <div class="text-4xl font-black text-cyan-300 my-3">${elapsed} sek.</div>
+        <p class="text-xs text-slate-300 mb-5">
+          Błędy: <b>${mistakes}</b> • Zdobyto: <b class="text-emerald-400">+${xpEarned} XP</b>
+          ${isRecord ? "<br><span class='text-amber-300 font-bold'>🏆 NOWY REKORD CZASU!</span>" : ""}
+        </p>
+        <button type="button" onclick="startMatchGame()" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-extrabold text-sm">Zagraj ponownie 🔁</button>
+      </div>
+    `;
+  }
+
+  renderWave();
+}
+
+/* ---------- GRA 2: DER / DIE / DAS RUSH ---------- */
+function startArticleGame() {
+  SFX.click();
+  openGameArena();
+  const scope = document.getElementById("gameScopeSelect").value;
+  let nouns = getWordsByScope(scope).filter(w => /^(der|die|das) /.test(w.de));
+  if (nouns.length < 4) nouns = ALL_WORDS.filter(w => /^(der|die|das) /.test(w.de));
+
+  let score = 0, combo = 0, lives = 3, locked = false;
+
+  function nextQuestion() {
+    locked = false;
+    const current = nouns[Math.floor(Math.random() * nouns.length)];
+    const clean = cleanGermanForSpeech(current.de);
+    const article = clean.split(" ")[0];
+    const nounBody = clean.slice(article.length + 1);
+
+    document.getElementById("gameHudRight").innerHTML = `
+      <span class="px-2.5 py-1 rounded-full glass text-amber-300">🔥 x${combo}</span>
+      <span class="px-2.5 py-1 rounded-full glass text-white">Pkt: ${score}</span>
+      <span class="px-2.5 py-1 rounded-full glass text-rose-400">${"❤️".repeat(lives)}${"🖤".repeat(3 - lives)}</span>
+    `;
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="glass rounded-3xl p-6 text-center mb-4 animate-pop">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">Wybierz właściwy rodzajnik</div>
+        <div id="artWordDisplay" class="text-3xl font-black text-white mb-2">
+          <span class="inline-block px-3 py-0.5 rounded-xl bg-white/10 text-slate-400 mr-1">___</span>${nounBody}
+        </div>
+        <div class="text-sm font-semibold text-indigo-300">${current.pl}</div>
+        <div id="artFeedback" class="h-6 mt-3 text-xs font-bold"></div>
+      </div>
+
+      <div class="grid grid-cols-3 gap-3">
+        <button type="button" onclick="checkArticle('der')" class="btn-arcade py-5 rounded-2xl bg-gradient-to-b from-sky-500 to-blue-700 text-white font-black text-xl shadow-lg shadow-sky-500/25">der</button>
+        <button type="button" onclick="checkArticle('die')" class="btn-arcade py-5 rounded-2xl bg-gradient-to-b from-rose-500 to-pink-700 text-white font-black text-xl shadow-lg shadow-rose-500/25">die</button>
+        <button type="button" onclick="checkArticle('das')" class="btn-arcade py-5 rounded-2xl bg-gradient-to-b from-emerald-500 to-green-700 text-white font-black text-xl shadow-lg shadow-emerald-500/25">das</button>
+      </div>
+    `;
+
+    window.checkArticle = (choice) => {
+      if (locked) return;
+      locked = true;
+      const fb = document.getElementById("artFeedback");
+      const display = document.getElementById("artWordDisplay");
+
+      if (choice === article) {
+        combo++;
+        score++;
+        SFX.ok(combo);
+        display.innerHTML = formatDe(clean);
+        fb.innerHTML = `<span class="text-emerald-400">✓ Dobrze! ${current.pluralOnly ? "(liczba mnoga = die)" : ""}</span>`;
+        if (state.autoSpeak) speakGerman(current.de);
+        setTimeout(nextQuestion, 650);
+      } else {
+        combo = 0;
+        lives--;
+        SFX.bad();
+        display.innerHTML = formatDe(clean);
+        display.classList.add("animate-shake");
+        fb.innerHTML = `<span class="text-rose-400">✕ Poprawnie: ${article} ${nounBody}</span>`;
+        if (!state.hard.includes(current.id)) state.hard.push(current.id);
+        saveState();
+
+        setTimeout(() => {
+          if (lives <= 0) finishArticleGame();
+          else nextQuestion();
+        }, 1100);
+      }
+    };
+  }
+
+  function finishArticleGame() {
+    const isRecord = score > state.records.articleBest;
+    if (isRecord) state.records.articleBest = score;
+    const xpEarned = score * 4;
+    if (score >= 10) { SFX.fanfare(); fireConfetti(60); }
+    if (xpEarned > 0) awardXP(xpEarned, { immediate: true });
+    else saveState({ immediate: true });
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="glass rounded-3xl p-6 text-center animate-pop">
+        <div class="text-5xl mb-2">🎯</div>
+        <h3 class="text-2xl font-black text-white">Koniec rundy!</h3>
+        <div class="text-5xl font-black text-pink-400 my-3">${score} pkt</div>
+        <p class="text-xs text-slate-300 mb-5">
+          Zdobyte XP: <b class="text-emerald-400">+${xpEarned} XP</b>
+          ${isRecord ? "<br><span class='text-amber-300 font-bold'>🏆 NOWY REKORD!</span>" : ""}
+        </p>
+        <button type="button" onclick="startArticleGame()" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-pink-500 to-purple-600 text-white font-extrabold text-sm">Jeszcze raz 🔥</button>
+      </div>
+    `;
+  }
+
+  nextQuestion();
+}
+
+/* ---------- GRA 3: SZYBKA PIŁKA (45s) ---------- */
+function startSpeedTFGame() {
+  SFX.click();
+  openGameArena();
+  const scope = document.getElementById("gameScopeSelect").value;
+  let pool = getWordsByScope(scope);
+  if (pool.length < 4) pool = [...ALL_WORDS];
+
+  let timeLeft = 45, score = 0, combo = 0, currentPair = null;
+
+  const timerId = setInterval(() => {
+    timeLeft--;
+    const tEl = document.getElementById("speedTimer");
+    if (tEl) tEl.innerText = `⏱️ ${timeLeft}s`;
+    if (timeLeft <= 0) {
+      clearAllGameTimers();
+      finishSpeedGame();
+    }
+  }, 1000);
+  activeTimers.push(timerId);
+
+  function nextPair() {
+    const word = pool[Math.floor(Math.random() * pool.length)];
+    const isTrue = Math.random() < 0.5;
+    let shownPl = word.pl;
+    if (!isTrue) {
+      const others = pool.filter(w => w.id !== word.id);
+      shownPl = others[Math.floor(Math.random() * others.length)].pl;
+    }
+    currentPair = { word, shownPl, isTrue };
+
+    document.getElementById("gameHudRight").innerHTML = `
+      <span class="px-2.5 py-1 rounded-full glass text-amber-300">🔥 x${combo}</span>
+      <span class="px-2.5 py-1 rounded-full glass text-emerald-300">Pkt: ${score}</span>
+      <span id="speedTimer" class="px-2.5 py-1 rounded-full glass text-white">⏱️ ${timeLeft}s</span>
+    `;
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="glass rounded-3xl p-6 text-center mb-4 animate-pop">
+        <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-3">Czy to poprawne tłumaczenie?</div>
+        <div class="text-2xl font-black text-white mb-3">${formatDe(cleanGermanForSpeech(word.de))}</div>
+        <div class="text-slate-500 text-lg font-bold my-1">=</div>
+        <div class="text-xl font-extrabold text-cyan-300 mt-1">${shownPl}</div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <button type="button" onclick="answerSpeed(false)" class="btn-arcade py-5 rounded-2xl bg-gradient-to-br from-rose-500 to-rose-700 text-white font-black text-lg shadow-lg shadow-rose-600/25">✕ FAŁSZ</button>
+        <button type="button" onclick="answerSpeed(true)" class="btn-arcade py-5 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 text-white font-black text-lg shadow-lg shadow-emerald-600/25">✓ PRAWDA</button>
+      </div>
+    `;
+  }
+
+  window.answerSpeed = (ans) => {
+    if (timeLeft <= 0 || !currentPair) return;
+    if (ans === currentPair.isTrue) {
+      combo++;
+      score++;
+      SFX.ok(combo);
+      nextPair();
+    } else {
+      combo = 0;
+      timeLeft = Math.max(1, timeLeft - 3);
+      SFX.bad();
+      showToast(`Pudło! ${cleanGermanForSpeech(currentPair.word.de)} = ${currentPair.word.pl} (-3s)`, "💥", "rose");
+      nextPair();
+    }
+  };
+
+  function finishSpeedGame() {
+    const isRecord = score > state.records.speedBest;
+    if (isRecord) state.records.speedBest = score;
+    const xpEarned = score * 3;
+    if (score >= 12) { SFX.fanfare(); fireConfetti(70); }
+    if (xpEarned > 0) awardXP(xpEarned, { immediate: true });
+    else saveState({ immediate: true });
+
+    document.getElementById("gameStage").innerHTML = `
+      <div class="glass rounded-3xl p-6 text-center animate-pop">
+        <div class="text-5xl mb-2">🔥</div>
+        <h3 class="text-2xl font-black text-white">Czas minął!</h3>
+        <div class="text-5xl font-black text-amber-400 my-3">${score} pkt</div>
+        <p class="text-xs text-slate-300 mb-5">
+          Zdobyte XP: <b class="text-emerald-400">+${xpEarned} XP</b>
+          ${isRecord ? "<br><span class='text-amber-300 font-bold'>🏆 NOWY REKORD!</span>" : ""}
+        </p>
+        <button type="button" onclick="startSpeedTFGame()" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-extrabold text-sm">Dawaj jeszcze raz ⚡</button>
+      </div>
+    `;
+  }
+
+  nextPair();
+}
+
+/* ---------- GRA 4: UKŁADANKA ZDAŃ I SŁÓW ---------- */
+function startScrambleGame() {
+  SFX.click();
+  openGameArena();
+  const scope = document.getElementById("gameScopeSelect").value;
+  let pool = getWordsByScope(scope).sort(() => Math.random() - 0.5);
+  let idx = 0, sessionSolved = 0;
+
+  function splitIntoTiles(deClean) {
+    const words = deClean.split(" ");
+    if (words.length >= 3) return { mode: "phrase", prefix: "", tiles: words };
+    let prefix = "", core = deClean;
+    if (/^(der|die|das) /.test(deClean)) {
+      prefix = deClean.slice(0, 3);
+      core = deClean.slice(4);
+    }
+    const chunks = [];
+    if (core.length <= 6) {
+      for (const ch of core) chunks.push(ch);
+    } else {
+      let i = 0;
+      while (i < core.length) {
+        const rem = core.length - i;
+        const step = rem <= 3 ? rem : (rem === 4 ? 2 : (Math.random() < 0.5 ? 2 : 3));
+        chunks.push(core.slice(i, i + step));
+        i += step;
+      }
+    }
+    return { mode: "word", prefix, tiles: chunks };
+  }
+
+  function renderPuzzle() {
+    if (idx >= pool.length) { pool.sort(() => Math.random() - 0.5); idx = 0; }
+    const item = pool[idx];
+    const clean = cleanGermanForSpeech(item.de);
+    const { mode, prefix, tiles } = splitIntoTiles(clean);
+    const targetAnswer = mode === "phrase" ? tiles.join(" ") : tiles.join("");
+    const bank = tiles.map((txt, i) => ({ id: i, txt, used: false })).sort(() => Math.random() - 0.5);
+    let chosen = [];
+
+    function draw() {
+      document.getElementById("gameHudRight").innerHTML = `
+        <span class="px-2.5 py-1 rounded-full glass text-emerald-300">🧩 Ułożone: ${sessionSolved}</span>
+      `;
+      const prefixBadge = prefix ? `<span class="${prefix} px-2.5 py-1.5 rounded-xl bg-white/10 text-base mr-1">${prefix}</span>` : "";
+
+      document.getElementById("gameStage").innerHTML = `
+        <div class="glass rounded-3xl p-5 text-center mb-4">
+          <div class="text-[11px] font-bold uppercase tracking-widest text-slate-400 mb-1">
+            ${mode === "phrase" ? "Ułóż zwrot po niemiecku" : "Ułóż słówko po niemiecku"}
+          </div>
+          <div class="text-xl font-black text-white mb-4">${item.pl}</div>
+
+          <div id="answerSlot" class="min-h-[64px] rounded-2xl bg-slate-900/80 border border-indigo-400/30 p-3 flex flex-wrap items-center justify-center gap-1.5">
+            ${prefixBadge}
+            ${chosen.length === 0 ? `<span class="text-xs text-slate-500 font-semibold">Klikaj kafelki poniżej...</span>` : ""}
+            ${chosen.map((c, pos) => `
+              <button type="button" onclick="removeScrambleTile(${pos})" class="btn-arcade px-3 py-1.5 rounded-xl bg-indigo-500 text-white font-extrabold text-sm shadow">${c.txt}</button>
+            `).join("")}
+          </div>
+        </div>
+
+        <div class="flex flex-wrap justify-center gap-2 mb-5">
+          ${bank.map((b, bi) => `
+            <button type="button" onclick="pickScrambleTile(${bi})" ${b.used ? "disabled" : ""} class="btn-arcade px-3.5 py-2.5 rounded-xl font-extrabold text-sm border transition-all ${b.used ? "opacity-20 bg-slate-800 border-transparent text-slate-500" : "glass text-white border-white/15 hover:border-emerald-400"}">
+              ${b.txt}
+            </button>
+          `).join("")}
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5">
+          <button type="button" onclick="hintScramble()" class="btn-arcade py-3 rounded-xl glass text-amber-300 font-bold text-xs">💡 Podpowiedź</button>
+          <button type="button" onclick="skipScramble()" class="btn-arcade py-3 rounded-xl glass text-slate-400 font-bold text-xs">Pomiń ➔</button>
+        </div>
+      `;
+    }
+
+    window.pickScrambleTile = (bankIndex) => {
+      const tile = bank[bankIndex];
+      if (tile.used) return;
+      SFX.click();
+      tile.used = true;
+      chosen.push(tile);
+      draw();
+
+      if (chosen.length === tiles.length) {
+        const built = mode === "phrase" ? chosen.map(c => c.txt).join(" ") : chosen.map(c => c.txt).join("");
+        if (built === targetAnswer) {
+          sessionSolved++;
+          state.records.scrambleTotal++;
+          SFX.ok(Math.min(7, sessionSolved));
+          speakGerman(item.de);
+          awardXP(12);
+          showToast(`Super! ${clean} (+12 XP)`, "🧩", "emerald");
+          idx++;
+          setTimeout(renderPuzzle, 850);
+        } else {
+          SFX.bad();
+          const slot = document.getElementById("answerSlot");
+          if (slot) slot.classList.add("animate-shake", "border-rose-500");
+          setTimeout(() => {
+            chosen.forEach(c => c.used = false);
+            chosen = [];
+            draw();
+          }, 550);
+        }
+      }
+    };
+
+    window.removeScrambleTile = (pos) => {
+      SFX.click();
+      const removed = chosen.splice(pos, 1)[0];
+      removed.used = false;
+      draw();
+    };
+
+    window.hintScramble = () => {
+      SFX.click();
+      let validLen = 0;
+      while (validLen < chosen.length && chosen[validLen].txt === tiles[validLen]) validLen++;
+      for (let i = validLen; i < chosen.length; i++) chosen[i].used = false;
+      chosen = chosen.slice(0, validLen);
+      if (validLen < tiles.length) {
+        const neededTxt = tiles[validLen];
+        const found = bank.find(b => !b.used && b.txt === neededTxt);
+        if (found) window.pickScrambleTile(bank.indexOf(found));
+      }
+    };
+
+    window.skipScramble = () => {
+      SFX.bad();
+      showToast(`Poprawnie: ${clean}`, "ℹ️");
+      idx++;
+      renderPuzzle();
+    };
+
+    draw();
+  }
+
+  renderPuzzle();
+}
+
+/* ============================================================================
+   10. MODUŁ 3: TEST 25 PYTAŃ (OCENA 1–6)
+   ============================================================================ */
+let quizPool = [], quizIdx = 0, quizScore = 0, quizCombo = 0, quizMistakes = [];
+
+function startQuiz() {
+  SFX.click();
+  const scope = document.getElementById("quizScopeSelect").value;
+  const source = getWordsByScope(scope);
+  const count = Math.min(25, source.length);
+  quizPool = [...source].sort(() => Math.random() - 0.5).slice(0, count);
+  quizIdx = 0;
+  quizScore = 0;
+  quizCombo = 0;
+  quizMistakes = [];
+
+  document.getElementById("quizStartBox").classList.add("hidden");
+  document.getElementById("quizEndBox").classList.add("hidden");
+  document.getElementById("quizPlayBox").classList.remove("hidden");
+  renderQuizQuestion();
+}
+
+function speakQuizWord() {
+  if (quizPool[quizIdx]) speakGerman(quizPool[quizIdx].de);
+}
+
+function renderQuizQuestion() {
+  const q = quizPool[quizIdx];
+  const total = quizPool.length;
+  document.getElementById("quizCounter").innerText = `Pytanie ${quizIdx + 1} / ${total}`;
+  document.getElementById("quizLiveScore").innerText = `Wynik: ${quizScore}`;
+  document.getElementById("quizProgressBar").style.width = `${Math.round((quizIdx / total) * 100)}%`;
+
+  const comboEl = document.getElementById("quizComboBadge");
+  if (quizCombo >= 2) {
+    comboEl.innerText = `🔥 x${quizCombo}`;
+    comboEl.classList.remove("hidden");
+  } else {
+    comboEl.classList.add("hidden");
+  }
+
+  document.getElementById("quizQuestionText").innerHTML = state.plToDe ? q.pl : formatDe(q.de);
+  document.getElementById("quizSpeakBtn").classList.toggle("hidden", state.plToDe);
+
+  const distractors = ALL_WORDS.filter(w => w.id !== q.id).sort(() => Math.random() - 0.5).slice(0, 3);
+  const options = [q, ...distractors].sort(() => Math.random() - 0.5);
+
+  const box = document.getElementById("quizOptionsBox");
+  box.innerHTML = "";
+  const letters = ["A", "B", "C", "D"];
+
+  options.forEach((opt, i) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-arcade glass rounded-2xl p-4 text-left flex items-center gap-3 border border-white/10 hover:border-indigo-400 transition-all";
+    btn.dataset.isRight = opt.id === q.id ? "1" : "0";
+    btn.innerHTML = `
+      <span class="w-7 h-7 rounded-lg bg-white/10 text-xs font-black text-slate-300 flex items-center justify-center shrink-0">${letters[i]}</span>
+      <span class="text-sm sm:text-base font-bold text-white">${state.plToDe ? formatDe(opt.de) : opt.pl}</span>
+    `;
+    btn.onclick = () => checkQuizOption(btn, opt.id === q.id, q);
+    box.appendChild(btn);
+  });
+}
+
+function checkQuizOption(clickedBtn, isCorrect, q) {
+  const allBtns = document.querySelectorAll("#quizOptionsBox button");
+  allBtns.forEach(b => b.disabled = true);
+
+  if (isCorrect) {
+    quizScore++;
+    quizCombo++;
+    SFX.ok(quizCombo);
+    clickedBtn.classList.add("bg-emerald-500/25", "border-emerald-400");
+    if (state.autoSpeak) speakGerman(q.de);
+  } else {
+    quizCombo = 0;
+    SFX.bad();
+    clickedBtn.classList.add("bg-rose-500/25", "border-rose-500", "animate-shake");
+    quizMistakes.push(q);
+    if (!state.hard.includes(q.id)) state.hard.push(q.id);
+    state.mastered = state.mastered.filter(id => id !== q.id);
+    saveState();
+
+    allBtns.forEach(b => {
+      if (b.dataset.isRight === "1") b.classList.add("bg-emerald-500/25", "border-emerald-400");
+    });
+  }
+
+  setTimeout(() => {
+    quizIdx++;
+    if (quizIdx < quizPool.length) renderQuizQuestion();
+    else finishQuiz();
+  }, 850);
+}
+
+function finishQuiz() {
+  document.getElementById("quizPlayBox").classList.add("hidden");
+  document.getElementById("quizEndBox").classList.remove("hidden");
+
+  const total = quizPool.length;
+  const pct = Math.round((quizScore / total) * 100);
+  let grade = "1";
+  let comment = "Spokojnie, dopiero się rozkręcasz! Wbij na folder „Do powtórki” i zaraz będzie 5.";
+  if (pct >= 98) { grade = "6"; comment = "TOTALNA DOMINACJA! Nauczyciel będzie w szoku 🔥👑"; }
+  else if (pct >= 90) { grade = "5"; comment = "Petarda! Masz to w małym palcu 💪"; }
+  else if (pct >= 75) { grade = "4"; comment = "Solidna robota! Jeszcze jedna powtórka i wpada piątka."; }
+  else if (pct >= 55) { grade = "3"; comment = "Zaliczone na luzie, ale możesz spokojnie wyciągnąć więcej!"; }
+  else if (pct >= 40) { grade = "2"; comment = "Na styk! Poćwicz błędy poniżej i zrób rewanż."; }
+
+  if (state.records.quizBestPct === null || pct > state.records.quizBestPct) {
+    state.records.quizBestPct = pct;
+  }
+
+  const xpEarned = quizScore * 5 + (pct >= 90 ? 40 : 0);
+  if (pct >= 75) { SFX.fanfare(); fireConfetti(85); }
+  if (xpEarned > 0) awardXP(xpEarned, { immediate: true });
+  else saveState({ immediate: true });
+
+  document.getElementById("quizGradeBadge").innerText = grade;
+  document.getElementById("quizFinalScore").innerText = `${quizScore} / ${total} (${pct}%) • +${xpEarned} XP`;
+  document.getElementById("quizFinalComment").innerText = comment;
+
+  const mBox = document.getElementById("quizMistakesBox");
+  const pracBtn = document.getElementById("quizPracticeMistakesBtn");
+  if (quizMistakes.length === 0) {
+    mBox.innerHTML = `<div class="p-3 rounded-2xl bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-bold text-center">Zero błędów! Idealny wynik! 🎉</div>`;
+    pracBtn.classList.add("hidden");
+  } else {
+    pracBtn.classList.remove("hidden");
+    mBox.innerHTML = `<div class="text-[11px] font-bold uppercase text-slate-400 mb-1">Do powtórzenia (${quizMistakes.length}):</div>` +
+      quizMistakes.map(m => `
+        <div class="p-3 rounded-xl bg-rose-500/10 border border-rose-500/25 flex items-center justify-between gap-2 text-xs">
+          <div><b class="text-white">${m.pl}</b> ➔ ${formatDe(m.de)}</div>
+          <button type="button" onclick="speakGerman('${m.de.replace(/'/g, "\\'")}')" aria-label="Odsłuchaj wymowę" class="text-base shrink-0">🔊</button>
+        </div>
+      `).join("");
+  }
+}
+
+function practiceHardFromQuiz() {
+  switchTab("cards");
+  openFlashcardScope("hard", "🔥 Do powtórki");
+}
+
+/* ============================================================================
+   11. MODUŁ 4: SŁOWNIK (DYNAMICZNE FILTRY Z CURRICULUM)
+   ============================================================================ */
+let dictFilter = "all";
+
+function buildDictFilterPills() {
+  const pillsBox = document.getElementById("dictFilterPills");
+  const items = [{ val: "all", label: `Wszystkie (${ALL_WORDS.length})`, tone: "normal" }];
+
+  CURRICULUM.forEach(ch => {
+    if (CURRICULUM.length > 1) {
+      items.push({ val: `chapter:${ch.id}`, label: `${ch.icon} ${ch.name.replace(/^Dział:\s*/i, "")}`, tone: "normal" });
+    }
+    ch.lessons.forEach(les => {
+      items.push({ val: `lesson:${les.id}`, label: `📂 ${les.shortName}`, tone: "normal" });
+    });
+  });
+  items.push({ val: "hard", label: "🔥 Trudne", tone: "rose" });
+
+  pillsBox.innerHTML = items.map(it => {
+    const active = dictFilter === it.val;
+    const cls = active
+      ? "bg-indigo-500 text-white"
+      : it.tone === "rose"
+      ? "glass text-rose-300"
+      : "glass text-slate-300";
+    return `<button type="button" onclick="setDictFilter('${it.val}')" class="px-3.5 py-1.5 rounded-full text-xs font-bold shrink-0 ${cls}">${it.label}</button>`;
+  }).join("");
+}
+
+function setDictFilter(val) {
+  SFX.click();
+  dictFilter = val;
+  buildDictFilterPills();
+  renderDict();
+}
+
+function toggleDictWordStatus(id) {
+  SFX.click();
+  if (state.mastered.includes(id)) {
+    state.mastered = state.mastered.filter(x => x !== id);
+    if (!state.hard.includes(id)) state.hard.push(id);
+  } else if (state.hard.includes(id)) {
+    state.hard = state.hard.filter(x => x !== id);
+  } else {
+    state.mastered.push(id);
+    awardXP(5);
+  }
+  saveState();
+  renderDict();
+}
+
+function renderDict() {
+  const q = document.getElementById("dictSearch").value.toLowerCase().trim();
+  let list = getWordsByScope(dictFilter);
+  if (q) {
+    list = list.filter(w => w.pl.toLowerCase().includes(q) || w.de.toLowerCase().includes(q));
+  }
+
+  const container = document.getElementById("dictList");
+  if (list.length === 0) {
+    container.innerHTML = `<div class="glass rounded-2xl p-6 text-center text-sm text-slate-400">Nic nie znaleziono 🕵️</div>`;
+    return;
+  }
+
+  container.innerHTML = list.map(w => {
+    const isM = state.mastered.includes(w.id);
+    const isH = state.hard.includes(w.id);
+    const statusBadge = isM
+      ? `<span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">✓ Umiem</span>`
+      : isH
+      ? `<span class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300">🔥 Powtórz</span>`
+      : `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/5 text-slate-400">Nowe</span>`;
+
+    return `
+      <div class="glass rounded-2xl px-4 py-3 flex items-center justify-between gap-3">
+        <div class="min-w-0 flex-1">
+          <div class="font-bold text-sm sm:text-base text-white break-words">${formatDe(w.de)}</div>
+          <div class="text-xs text-slate-400 mt-0.5">${w.pl} • <span class="text-slate-500">${w.lessonShort}</span></div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          <button type="button" onclick="toggleDictWordStatus(${w.id})" class="btn-arcade" title="Zmień status">${statusBadge}</button>
+          <button type="button" onclick="speakGerman('${w.de.replace(/'/g, "\\'")}')" aria-label="Odsłuchaj wymowę" class="btn-arcade w-9 h-9 rounded-full bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-sm">🔊</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+/* ============================================================================
+   12. MODUŁ 5: PROFIL, KARTA KONTA W CHMURZE, POSTĘP, ODZNAKI I STATYSTYKI
+   ============================================================================ */
+function renderProfileAccountCard() {
+  const card = document.getElementById("profileAccountCard");
+  if (!currentUser) {
+    card.innerHTML = `
+      <div class="flex items-center gap-3 mb-3">
+        <div class="w-11 h-11 rounded-2xl bg-indigo-500/20 border border-indigo-400/35 flex items-center justify-center text-xl shrink-0">☁️</div>
+        <div class="min-w-0">
+          <div class="text-sm font-black text-white">Zapisuj postępy w chmurze</div>
+          <div class="text-[11px] text-slate-400 leading-snug mt-0.5">Zaloguj się, aby synchronizować fiszki, XP, serię i rekordy między telefonem a komputerem oraz wejść do rankingu klasy.</div>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button type="button" onclick="openAuthModal('login')" class="btn-arcade py-2.5 rounded-xl bg-indigo-500 text-white font-extrabold text-xs">Zaloguj się</button>
+        <button type="button" onclick="openAuthModal('register')" class="btn-arcade py-2.5 rounded-xl glass border border-emerald-400/35 text-emerald-300 font-extrabold text-xs">Załóż konto</button>
+      </div>
+    `;
+    return;
+  }
+
+  const safeName = SyncCore.escapeHtml(currentUser.username);
+  const safeClass = SyncCore.escapeHtml(currentUser.className || "Klasa");
+  let statusBadge = "";
+  if (IS_CLOUD_ENABLED) {
+    if (syncStatus === "syncing") statusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300">↻ Synchronizacja...</span>`;
+    else if (syncStatus === "offline") statusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">📴 Kopia lokalna (offline)</span>`;
+    else if (syncStatus === "error") statusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300">⚠️ Błąd chmury (zapis lokalny)</span>`;
+    else statusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300">☁️ Zsynchronizowano</span>`;
+  } else {
+    statusBadge = `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300">💾 Tryb lokalny (podłącz Supabase)</span>`;
+  }
+
+  const timeStr = lastSyncedAt
+    ? `Ostatnia synchr.: ${lastSyncedAt.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`
+    : "Auto-zapis aktywny + kopia w pamięci urządzenia";
+
+  card.innerHTML = `
+    <div class="flex items-start justify-between gap-2 mb-3">
+      <div class="min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-base font-black text-white truncate">${safeName}</span>
+          <span class="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-500/25 text-indigo-200">${safeClass}</span>
+        </div>
+        <div class="mt-1 flex items-center gap-2 flex-wrap">
+          ${statusBadge}
+        </div>
+        <div class="text-[10px] text-slate-400 mt-1">${timeStr}</div>
+      </div>
+      <button type="button" onclick="confirmSignOut()" class="btn-arcade px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 font-bold text-[11px] shrink-0">Wyloguj</button>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <button type="button" onclick="pullProgressFromCloud({ silent: false })" class="btn-arcade py-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 font-extrabold text-xs">↻ Synchronizuj teraz</button>
+      <button type="button" onclick="openEditProfileModal()" class="btn-arcade py-2.5 rounded-xl glass border border-white/10 text-slate-200 font-bold text-xs">✏️ Edytuj nick / klasę</button>
+    </div>
+  `;
+}
+
+function renderProfile() {
+  renderProfileAccountCard();
+
+  const { current, next } = getRankInfo(state.xp);
+  const activeStreak = SyncCore.getActiveStreakDisplay(state);
+
+  document.getElementById("profRankEmoji").innerText = current.emoji;
+  document.getElementById("profLevelLabel").innerText = `Poziom ${current.lv}`;
+  document.getElementById("profRankTitle").innerText = current.title;
+  document.getElementById("profTotalXp").innerText = `${state.xp} XP`;
+
+  document.getElementById("profStreakNow").innerText = `${activeStreak} ${activeStreak === 1 ? "dzień" : "dni"}`;
+  document.getElementById("profStreakBest").innerText = `${state.bestStreak || 0} ${(state.bestStreak || 0) === 1 ? "dzień" : "dni"}`;
+  document.getElementById("profMasteredCompact").innerText = `${state.mastered.length}/${ALL_WORDS.length}`;
+
+  if (next) {
+    const pct = Math.min(100, Math.round(((state.xp - current.xp) / (next.xp - current.xp)) * 100));
+    document.getElementById("profXpBar").style.width = `${pct}%`;
+    document.getElementById("profNextXp").innerText = `Do Lv.${next.lv}: ${next.xp - state.xp} XP`;
+  } else {
+    document.getElementById("profXpBar").style.width = "100%";
+    document.getElementById("profNextXp").innerText = "MAX POZIOM! 👑";
+  }
+
+  const lBox = document.getElementById("lessonStatsContainer");
+  lBox.innerHTML = CURRICULUM.map(ch => {
+    const chWords = getWordsByScope(`chapter:${ch.id}`);
+    const chDone = chWords.filter(w => state.mastered.includes(w.id)).length;
+    const chPct = Math.round((chDone / Math.max(1, chWords.length)) * 100);
+
+    const lesRows = ch.lessons.map(les => {
+      const done = les.words.filter(w => state.mastered.includes(w.id)).length;
+      const pct = Math.round((done / Math.max(1, les.words.length)) * 100);
+      return `
+        <div class="pl-3 border-l-2 border-indigo-500/30">
+          <div class="flex justify-between text-[11px] font-bold mb-1">
+            <span class="text-slate-300">📂 ${les.name}</span>
+            <span class="text-cyan-300">${done}/${les.words.length} (${pct}%)</span>
+          </div>
+          <div class="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full bg-gradient-to-r from-indigo-500 to-cyan-400" style="width: ${pct}%"></div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      <div class="space-y-2.5">
+        <div class="flex justify-between items-center text-xs font-black text-white">
+          <span>${ch.icon} ${ch.name}</span>
+          <span class="text-emerald-400">${chDone}/${chWords.length} (${chPct}%)</span>
+        </div>
+        <div class="space-y-2">${lesRows}</div>
+      </div>
+    `;
+  }).join("");
+
+  document.getElementById("statBestMatch").innerText = state.records.matchBestSec !== null ? `${state.records.matchBestSec}s` : "—";
+  document.getElementById("statBestArticle").innerText = `${state.records.articleBest} pkt`;
+  document.getElementById("statBestSpeed").innerText = `${state.records.speedBest} pkt`;
+  document.getElementById("statBestQuiz").innerText = state.records.quizBestPct !== null ? `${state.records.quizBestPct}%` : "—";
+  document.getElementById("statScrambleTotal").innerText = `${state.records.scrambleTotal || 0} ułożonych`;
+
+  document.getElementById("badgeCountLabel").innerText = `${state.badges.length} / ${BADGES_DEF.length}`;
+  document.getElementById("badgesGrid").innerHTML = BADGES_DEF.map(b => {
+    const unlocked = state.badges.includes(b.id);
+    return `
+      <div class="rounded-2xl p-3 border text-center transition-all ${unlocked ? "bg-indigo-500/15 border-indigo-400/40" : "bg-slate-900/50 border-white/5 opacity-45 grayscale"}">
+        <div class="text-2xl mb-1">${b.icon}</div>
+        <div class="text-xs font-extrabold text-white">${b.name}</div>
+        <div class="text-[10px] text-slate-400 mt-0.5 leading-tight">${b.desc}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function copyFlexStats() {
+  SFX.click();
+  const { current } = getRankInfo(state.xp);
+  const activeStreak = SyncCore.getActiveStreakDisplay(state);
+  const namePart = currentUser ? ` (${currentUser.username})` : "";
+  const text = `🗂️ Fiszki – Niemiecki${namePart}\n${current.emoji} Lv.${current.lv} ${current.title} (${state.xp} XP)\n🔥 Seria: ${activeStreak} dni\n✅ Opanowane słówka: ${state.mastered.length}/${ALL_WORDS.length}\n🎯 Rekord Der/Die/Das: ${state.records.articleBest} pkt\n🔥 Szybka Piłka: ${state.records.speedBest} pkt\n⚡ Najlepszy Test: ${state.records.quizBestPct !== null ? state.records.quizBestPct + "%" : "jeszcze niegrany"}`;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      showToast("Skopiowano statystyki! Wklej na grupę klasy 💬", "📋", "emerald");
+    }).catch(() => fallbackCopyText(text));
+  } else {
+    fallbackCopyText(text);
+  }
+}
+
+function fallbackCopyText(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    showToast("Skopiowano statystyki! Wklej na grupę klasy 💬", "📋", "emerald");
+  } catch (e) {
+    showToast("Nie udało się skopiować", "⚠️", "rose");
+  }
+  document.body.removeChild(ta);
+}
+
+function confirmResetProgress() {
+  SFX.click();
+  showModal({
+    icon: "🗑️",
+    title: "Wyzerować postępy?",
+    text: currentUser
+      ? "Usuniesz zdobyte XP, serię, odznaki, rekordy oraz statusy fiszek zarówno na tym urządzeniu, jak i na koncie w chmurze. Tej operacji nie da się cofnąć."
+      : "Usuniesz wszystkie zdobyte XP, serię, odznaki, rekordy w grach oraz statusy fiszek. Tej operacji nie da się cofnąć.",
+    actions: [
+      { label: "Anuluj", className: "btn-arcade flex-1 py-3 rounded-xl glass text-slate-300 font-bold text-sm" },
+      {
+        label: "Tak, resetuj",
+        className: "btn-arcade flex-1 py-3 rounded-xl bg-rose-600 text-white font-extrabold text-sm",
+        onClick: () => {
+          const resetNow = new Date().toISOString();
+          state = {
+            ...SyncCore.createDefaultState(),
+            soundEnabled: state.soundEnabled,
+            autoSpeak: state.autoSpeak,
+            plToDe: state.plToDe,
+            lastResetAt: resetNow,
+            updatedAt: resetNow
+          };
+          saveState({ immediate: true });
+          refreshUIAll();
+          showToast("Wszystkie postępy zostały wyzerowane", "🧹");
+        }
+      }
+    ]
+  });
+}
+
+/* ============================================================================
+   13. ZDARZENIA SIECI / WIDOCZNOŚCI I INICJALIZACJA APLIKACJI
+   ============================================================================ */
+window.addEventListener("online", () => {
+  if (currentUser) {
+    showToast("Wrócił internet — synchronizuję postępy!", "☁️", "emerald");
+    pullProgressFromCloud({ silent: true });
+  }
+});
+
+window.addEventListener("offline", () => {
+  if (currentUser && IS_CLOUD_ENABLED) {
+    setSyncStatus("offline");
+    showToast("Tryb offline — zapisuję w pamięci telefonu", "📴");
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!currentUser) return;
+  if (document.visibilityState === "hidden") {
+    clearTimeout(syncDebounceTimer);
+    pushProgressToCloud({ silent: true });
+  } else if (document.visibilityState === "visible") {
+    pullProgressFromCloud({ silent: true });
+  }
+});
+
+window.addEventListener("pagehide", () => {
+  if (currentUser) {
+    persistStateToCache(currentUser.id, state);
+  }
+});
+
+window.onload = function () {
+  resizeConfettiCanvas();
+  loadState();
+  populateScopeSelects();
+  updateHeaderUI();
+  renderCurriculumTree();
+  buildDictFilterPills();
+  checkBadges();
+  initCloudBackend();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+{
+  "name": "Fiszki – Nauka Niemieckiego",
+  "description": "Interaktywna aplikacja do nauki słówek z języka niemieckiego z fiszkami 3D, minigrami, testem, synchronizacją w chmurze Supabase i wspólnym rankingiem klasy.",
+  "requestFramePermissions": []
+}
