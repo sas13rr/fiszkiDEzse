@@ -177,8 +177,27 @@ test('sortLeaderboard orders by xp, streak, mastered, records and filters by cla
   assert.deepEqual(core.sortLeaderboard(rows, 'xp', '8A').map((r: any) => r.username), ['Maja', 'Ania']);
 });
 
-test('escapeHtml neutralizes XSS payloads and isSupabaseConfigured checks placeholders', () => {
+test('escapeHtml neutralizes XSS payloads and isSupabaseConfigured checks placeholders and publishable keys', () => {
   assert.equal(core.escapeHtml('<img src=x onerror=alert(1)>'), '&lt;img src=x onerror=alert(1)&gt;');
   assert.equal(core.isSupabaseConfigured({ url: 'TUTAJ_WKLEJ_PROJECT_URL', anonKey: 'TUTAJ_WKLEJ_ANON_KEY' }), false);
-  assert.equal(core.isSupabaseConfigured({ url: 'https://abc123.supabase.co', anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.demo' }), true);
+  assert.equal(core.isSupabaseConfigured({ url: 'https://nzggvdrwgkanzqmrbokb.supabase.co', anonKey: 'sb_publishable_uVsAdLQFg98cEFWTLr-Tuw_EyBxSphs' }), true);
+});
+
+test('checkTypedAnswer validates exact German words, separable verbs, umlaut tolerance, and missing articles', () => {
+  assert.equal(core.checkTypedAnswer('die Erkältung', 'die Erkältung, -en', true).status, 'exact');
+  assert.equal(core.checkTypedAnswer('aufpassen', 'auf|passen', true).correct, true);
+  assert.equal(core.checkTypedAnswer('die Erkaltung', 'die Erkältung, -en', true).status, 'almost_umlaut');
+  assert.equal(core.checkTypedAnswer('Erkältung', 'die Erkältung, -en', true).status, 'missing_article');
+  assert.equal(core.checkTypedAnswer('das Auto', 'die Erkältung, -en', true).correct, false);
+  assert.equal(core.checkTypedAnswer('przepisywać', 'przepisywać (receptę)', false).correct, true);
+});
+
+test('mergeRecords preserves new minigame records (typingBest, memoryBestSec, listenBest)', () => {
+  const merged = core.mergeRecords(
+    { typingBest: 8, memoryBestSec: 44, listenBest: 5 },
+    { typingBest: 12, memoryBestSec: 31, listenBest: 3 }
+  );
+  assert.equal(merged.typingBest, 12);
+  assert.equal(merged.memoryBestSec, 31);
+  assert.equal(merged.listenBest, 5);
 });

@@ -24,7 +24,10 @@
     articleBest: 0,
     speedBest: 0,
     scrambleTotal: 0,
-    quizBestPct: null
+    quizBestPct: null,
+    typingBest: 0,
+    memoryBestSec: null,
+    listenBest: 0
   };
 
   function createDefaultState() {
@@ -213,6 +216,64 @@
     }
   }
 
+  function cleanExpectedAnswer(raw, isGerman) {
+    let text = String(raw || '');
+    if (isGerman) {
+      text = text.split(',')[0].replace(/\|/g, '');
+    } else {
+      text = text.replace(/\s*\([^)]*\)\s*/g, ' ');
+    }
+    return text.replace(/[.!?]+$/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function foldDiacritics(str) {
+    return String(str || '')
+      .toLowerCase()
+      .replace(/ß/g, 'ss')
+      .replace(/ä/g, 'a')
+      .replace(/ö/g, 'o')
+      .replace(/ü/g, 'u')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/ł/g, 'l');
+  }
+
+  /**
+   * Sprawdza odpowiedź wpisaną z klawiatury w grze "Pisanie Słówek".
+   * Zwraca: { correct: boolean, status: 'exact'|'almost_umlaut'|'missing_article'|'wrong', expectedClean: string }
+   */
+  function checkTypedAnswer(userInput, expectedRaw, isGerman) {
+    const expectedClean = cleanExpectedAnswer(expectedRaw, isGerman);
+    const normUser = String(userInput || '')
+      .replace(/\|/g, '')
+      .replace(/[.!?]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+    const normExpected = expectedClean.toLowerCase();
+
+    if (!normUser) {
+      return { correct: false, status: 'empty', expectedClean };
+    }
+
+    if (normUser === normExpected) {
+      return { correct: true, status: 'exact', expectedClean };
+    }
+
+    if (isGerman && /^(der|die|das) /.test(normExpected)) {
+      const withoutArticle = normExpected.slice(4);
+      if (normUser === withoutArticle) {
+        return { correct: false, status: 'missing_article', expectedClean };
+      }
+    }
+
+    if (foldDiacritics(normUser) === foldDiacritics(normExpected)) {
+      return { correct: true, status: 'almost_umlaut', expectedClean };
+    }
+
+    return { correct: false, status: 'wrong', expectedClean };
+  }
+
   function uniqueNumbers(arr) {
     return Array.from(new Set((Array.isArray(arr) ? arr : []).map(Number).filter(Number.isFinite)));
   }
@@ -227,33 +288,33 @@
     return Number.isFinite(ms) ? ms : 0;
   }
 
+  function minPositive(a, b) {
+    const vals = [a, b]
+      .filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0)
+      .map(Number);
+    return vals.length ? Math.min(...vals) : null;
+  }
+
   function mergeRecords(a, b) {
     const recA = { ...DEFAULT_RECORDS, ...(a || {}) };
     const recB = { ...DEFAULT_RECORDS, ...(b || {}) };
-
-    const matchCandidates = [recA.matchBestSec, recB.matchBestSec]
-      .filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)) && Number(v) > 0)
-      .map(Number);
 
     const quizCandidates = [recA.quizBestPct, recB.quizBestPct]
       .filter(v => v !== null && v !== undefined && Number.isFinite(Number(v)))
       .map(Number);
 
     return {
-      matchBestSec: matchCandidates.length ? Math.min(...matchCandidates) : null,
+      matchBestSec: minPositive(recA.matchBestSec, recB.matchBestSec),
       articleBest: Math.max(Number(recA.articleBest) || 0, Number(recB.articleBest) || 0),
       speedBest: Math.max(Number(recA.speedBest) || 0, Number(recB.speedBest) || 0),
       scrambleTotal: Math.max(Number(recA.scrambleTotal) || 0, Number(recB.scrambleTotal) || 0),
-      quizBestPct: quizCandidates.length ? Math.max(...quizCandidates) : null
+      quizBestPct: quizCandidates.length ? Math.max(...quizCandidates) : null,
+      typingBest: Math.max(Number(recA.typingBest) || 0, Number(recB.typingBest) || 0),
+      memoryBestSec: minPositive(recA.memoryBestSec, recB.memoryBestSec),
+      listenBest: Math.max(Number(recA.listenBest) || 0, Number(recB.listenBest) || 0)
     };
   }
 
-  /**
-   * Inteligentnie łączy lokalny stan z chmurowym.
-   * - Jeśli na jednym z urządzeń wykonano świadomy reset (`lastResetAt`), nowszy reset ma priorytet.
-   * - W trybie `mergeGuest` (logowanie gościa) bezstratnie łączy lokalny dorobek z kontem w chmurze.
-   * - W zwykłej synchronizacji między telefonem a komputerem łączy postępy tak, by żadne zdobyte XP/odznaki/rekordy nie zginęły.
-   */
   function mergeProgressStates(localRaw, remoteRaw, options) {
     const opts = options || {};
     const local = { ...createDefaultState(), ...(localRaw || {}), records: { ...DEFAULT_RECORDS, ...((localRaw && localRaw.records) || {}) } };
@@ -368,11 +429,16 @@
     const article = Number(entry.article_best) || 0;
     const speed = Number(entry.speed_best) || 0;
     const scramble = Number(entry.scramble_total) || 0;
+    const typing = Number(entry.typing_best) || 0;
+    const listen = Number(entry.listen_best) || 0;
     const quiz = Number(entry.quiz_best_pct) || 0;
     const matchBonus = entry.match_best_sec != null && entry.match_best_sec > 0
       ? Math.max(0, 120 - Number(entry.match_best_sec))
       : 0;
-    return article * 4 + speed * 3 + scramble * 2 + quiz + matchBonus;
+    const memoryBonus = entry.memory_best_sec != null && entry.memory_best_sec > 0
+      ? Math.max(0, 100 - Number(entry.memory_best_sec))
+      : 0;
+    return article * 4 + speed * 3 + typing * 4 + listen * 4 + scramble * 2 + quiz + matchBonus + memoryBonus;
   }
 
   function sortLeaderboard(entries, sortBy, classFilter) {
@@ -415,6 +481,8 @@
     normalizeLoginToEmail,
     validateAuthForm,
     isSupabaseConfigured,
+    cleanExpectedAnswer,
+    checkTypedAnswer,
     mergeRecords,
     mergeProgressStates,
     toCloudProgressRow,

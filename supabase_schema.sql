@@ -2,15 +2,10 @@
 -- FISZKI – NAUKA NIEMIECKIEGO: KOMPLETNY SKRYPT SQL DLA SUPABASE
 -- ============================================================================
 -- Instrukcja uruchomienia:
--- 1. Utwórz darmowy projekt na https://supabase.com
--- 2. Otwórz zakładkę "SQL Editor" -> "New query"
--- 3. Wklej CAŁĄ zawartość tego pliku i kliknij "Run"
--- 4. (Zalecane dla logowania samym loginem bez potwierdzania e-maila):
+-- 1. Otwórz Supabase -> SQL Editor -> New query
+-- 2. Wklej CAŁĄ zawartość tego pliku i kliknij "Run"
+-- 3. (Zalecane dla logowania samym loginem bez klikania linku w mailu):
 --    Wejdź w Authentication -> Providers -> Email i wyłącz "Confirm email"
---    (dzięki temu uczniowie mogą od razu zalogować się po rejestracji!).
--- 5. Wejdź w Project Settings -> API i skopiuj:
---    - Project URL -> wklej do SUPABASE_CONFIG.url w pliku index.html
---    - anon / publishable key -> wklej do SUPABASE_CONFIG.anonKey w index.html
 -- ============================================================================
 
 -- 1. TABELA PROFILI UCZNIÓW (powiązana 1:1 z auth.users)
@@ -36,7 +31,7 @@ create table if not exists public.user_progress (
   best_streak integer not null default 0 check (best_streak >= 0),
   last_study_date date,
   badges text[] not null default '{}',
-  records jsonb not null default '{"matchBestSec": null, "articleBest": 0, "speedBest": 0, "scrambleTotal": 0, "quizBestPct": null}'::jsonb,
+  records jsonb not null default '{"matchBestSec": null, "articleBest": 0, "speedBest": 0, "scrambleTotal": 0, "quizBestPct": null, "typingBest": 0, "memoryBestSec": null, "listenBest": 0}'::jsonb,
   preferences jsonb not null default '{"soundEnabled": true, "autoSpeak": false, "plToDe": true, "collapsedChapters": []}'::jsonb,
   sync_version integer not null default 1 check (sync_version >= 1),
   last_reset_at timestamptz,
@@ -44,7 +39,6 @@ create table if not exists public.user_progress (
 );
 
 -- 3. PUBLICZNA TABELA RANKINGU KLASY (aktualizowana wyłącznie przez triggery DB!)
--- Nie zawiera żadnych adresów e-mail ani prywatnych ustawień – tylko statystyki do rankingu.
 create table if not exists public.leaderboard_entries (
   user_id uuid primary key references public.profiles(id) on delete cascade,
   username text not null,
@@ -60,8 +54,16 @@ create table if not exists public.leaderboard_entries (
   speed_best integer not null default 0,
   scramble_total integer not null default 0,
   quiz_best_pct integer,
+  typing_best integer not null default 0,
+  memory_best_sec integer,
+  listen_best integer not null default 0,
   updated_at timestamptz not null default now()
 );
+
+-- Bezpieczne dodanie nowych kolumn, jeśli tabela była już wcześniej utworzona
+alter table public.leaderboard_entries add column if not exists typing_best integer not null default 0;
+alter table public.leaderboard_entries add column if not exists memory_best_sec integer;
+alter table public.leaderboard_entries add column if not exists listen_best integer not null default 0;
 
 -- Indeksy przyspieszające sortowanie rankingu klasy
 create index if not exists idx_leaderboard_xp on public.leaderboard_entries (xp desc, mastered_count desc);
@@ -73,7 +75,6 @@ create index if not exists idx_leaderboard_class on public.leaderboard_entries (
 -- 4. FUNKCJE I TRIGGERY AUTOMATYCZNE
 -- ============================================================================
 
--- 4a. Automatyczne odświeżanie kolumny updated_at
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -94,7 +95,6 @@ create trigger trg_user_progress_updated_at
   before update on public.user_progress
   for each row execute function public.set_updated_at();
 
--- 4b. Synchronizacja danych z profiles + user_progress -> leaderboard_entries
 create or replace function public.sync_leaderboard_entry(p_user_id uuid)
 returns void
 language plpgsql
@@ -109,6 +109,9 @@ declare
   v_speed integer;
   v_scramble integer;
   v_quiz integer;
+  v_typing integer;
+  v_memory_sec integer;
+  v_listen integer;
 begin
   select * into v_profile from public.profiles where id = p_user_id;
   if not found then
@@ -117,60 +120,47 @@ begin
 
   select * into v_prog from public.user_progress where user_id = p_user_id;
 
-  v_match_sec := nullif(v_prog.records->>'matchBestSec', '')::integer;
-  v_article   := coalesce(nullif(v_prog.records->>'articleBest', '')::integer, 0);
-  v_speed     := coalesce(nullif(v_prog.records->>'speedBest', '')::integer, 0);
-  v_scramble  := coalesce(nullif(v_prog.records->>'scrambleTotal', '')::integer, 0);
-  v_quiz      := nullif(v_prog.records->>'quizBestPct', '')::integer;
+  v_match_sec  := nullif(v_prog.records->>'matchBestSec', '')::integer;
+  v_article    := coalesce(nullif(v_prog.records->>'articleBest', '')::integer, 0);
+  v_speed      := coalesce(nullif(v_prog.records->>'speedBest', '')::integer, 0);
+  v_scramble   := coalesce(nullif(v_prog.records->>'scrambleTotal', '')::integer, 0);
+  v_quiz       := nullif(v_prog.records->>'quizBestPct', '')::integer;
+  v_typing     := coalesce(nullif(v_prog.records->>'typingBest', '')::integer, 0);
+  v_memory_sec := nullif(v_prog.records->>'memoryBestSec', '')::integer;
+  v_listen     := coalesce(nullif(v_prog.records->>'listenBest', '')::integer, 0);
 
   insert into public.leaderboard_entries (
-    user_id,
-    username,
-    class_name,
-    xp,
-    level,
-    streak,
-    best_streak,
-    mastered_count,
-    badges_count,
-    match_best_sec,
-    article_best,
-    speed_best,
-    scramble_total,
-    quiz_best_pct,
-    updated_at
+    user_id, username, class_name, xp, level, streak, best_streak,
+    mastered_count, badges_count, match_best_sec, article_best,
+    speed_best, scramble_total, quiz_best_pct, typing_best,
+    memory_best_sec, listen_best, updated_at
   ) values (
-    v_profile.id,
-    v_profile.username,
-    v_profile.class_name,
-    coalesce(v_prog.xp, 0),
-    coalesce(v_prog.level, 1),
-    coalesce(v_prog.streak, 0),
-    coalesce(v_prog.best_streak, 0),
+    v_profile.id, v_profile.username, v_profile.class_name,
+    coalesce(v_prog.xp, 0), coalesce(v_prog.level, 1),
+    coalesce(v_prog.streak, 0), coalesce(v_prog.best_streak, 0),
     coalesce(array_length(v_prog.mastered, 1), 0),
     coalesce(array_length(v_prog.badges, 1), 0),
-    v_match_sec,
-    v_article,
-    v_speed,
-    v_scramble,
-    v_quiz,
-    now()
+    v_match_sec, v_article, v_speed, v_scramble, v_quiz,
+    v_typing, v_memory_sec, v_listen, now()
   )
   on conflict (user_id) do update set
-    username       = excluded.username,
-    class_name     = excluded.class_name,
-    xp             = excluded.xp,
-    level          = excluded.level,
-    streak         = excluded.streak,
-    best_streak    = excluded.best_streak,
-    mastered_count = excluded.mastered_count,
-    badges_count   = excluded.badges_count,
-    match_best_sec = excluded.match_best_sec,
-    article_best   = excluded.article_best,
-    speed_best     = excluded.speed_best,
-    scramble_total = excluded.scramble_total,
-    quiz_best_pct  = excluded.quiz_best_pct,
-    updated_at     = now();
+    username        = excluded.username,
+    class_name      = excluded.class_name,
+    xp              = excluded.xp,
+    level           = excluded.level,
+    streak          = excluded.streak,
+    best_streak     = excluded.best_streak,
+    mastered_count  = excluded.mastered_count,
+    badges_count    = excluded.badges_count,
+    match_best_sec  = excluded.match_best_sec,
+    article_best    = excluded.article_best,
+    speed_best      = excluded.speed_best,
+    scramble_total  = excluded.scramble_total,
+    quiz_best_pct   = excluded.quiz_best_pct,
+    typing_best     = excluded.typing_best,
+    memory_best_sec = excluded.memory_best_sec,
+    listen_best     = excluded.listen_best,
+    updated_at      = now();
 end;
 $$;
 
@@ -208,7 +198,6 @@ create trigger trg_progress_sync_lb
   after insert or update on public.user_progress
   for each row execute function public.trg_after_progress_change();
 
--- 4c. Automatyczne tworzenie profilu i rekordu postępów przy rejestracji nowego konta
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -258,7 +247,6 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- 4d. Bezpieczna funkcja RPC do sprawdzania dostępności loginu (zwraca tylko true/false, bez wycieku emaili)
 create or replace function public.is_username_available(p_username text)
 returns boolean
 language sql
@@ -280,62 +268,50 @@ alter table public.profiles enable row level security;
 alter table public.user_progress enable row level security;
 alter table public.leaderboard_entries enable row level security;
 
--- PROFILES: użytkownik widzi i edytuje wyłącznie własny profil
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
-  on public.profiles for select
-  to authenticated
+  on public.profiles for select to authenticated
   using (auth.uid() = id);
 
 drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own"
-  on public.profiles for insert
-  to authenticated
+  on public.profiles for insert to authenticated
   with check (auth.uid() = id);
 
 drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own"
-  on public.profiles for update
-  to authenticated
+  on public.profiles for update to authenticated
   using (auth.uid() = id)
   with check (auth.uid() = id);
 
--- USER_PROGRESS: ścisły dostęp wyłącznie dla właściciela konta
 drop policy if exists "progress_select_own" on public.user_progress;
 create policy "progress_select_own"
-  on public.user_progress for select
-  to authenticated
+  on public.user_progress for select to authenticated
   using (auth.uid() = user_id);
 
 drop policy if exists "progress_insert_own" on public.user_progress;
 create policy "progress_insert_own"
-  on public.user_progress for insert
-  to authenticated
+  on public.user_progress for insert to authenticated
   with check (auth.uid() = user_id);
 
 drop policy if exists "progress_update_own" on public.user_progress;
 create policy "progress_update_own"
-  on public.user_progress for update
-  to authenticated
+  on public.user_progress for update to authenticated
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
 
 drop policy if exists "progress_delete_own" on public.user_progress;
 create policy "progress_delete_own"
-  on public.user_progress for delete
-  to authenticated
+  on public.user_progress for delete to authenticated
   using (auth.uid() = user_id);
 
--- LEADERBOARD_ENTRIES: wszyscy mogą odczytywać wspólny ranking klasy,
--- ale NIKT z poziomu klienta nie może go ręcznie modyfikować (robi to tylko trigger)
 drop policy if exists "leaderboard_select_all" on public.leaderboard_entries;
 create policy "leaderboard_select_all"
-  on public.leaderboard_entries for select
-  to anon, authenticated
+  on public.leaderboard_entries for select to anon, authenticated
   using (true);
 
 -- ============================================================================
--- 6. REALTIME (aktualizacje rankingu i postępów na żywo między urządzeniami)
+-- 6. REALTIME (aktualizacje rankingu i postępów na żywo)
 -- ============================================================================
 do $$
 begin
