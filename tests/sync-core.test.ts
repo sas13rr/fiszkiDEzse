@@ -5,48 +5,39 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const core = require('../sync-core.js');
 
-test('normalizeLoginToEmail handles emails and Polish usernames', () => {
-  assert.equal(core.normalizeLoginToEmail('Kuba@Szkola.PL'), 'kuba@szkola.pl');
-  assert.equal(core.normalizeLoginToEmail('Kuba_8A'), 'kuba_8a@fiszki.local');
-  assert.equal(core.normalizeLoginToEmail('Żółć 8B'), 'zolc_8b@fiszki.local');
+test('normalizeLoginToEmail maps logins to @fiszki.app and supports legacy domain fallback', () => {
+  assert.equal(core.normalizeLoginToEmail('Kuba_8A'), 'kuba_8a@fiszki.app');
+  assert.equal(core.normalizeLoginToEmail('Żółć8B'), 'zolc8b@fiszki.app');
+  assert.equal(core.normalizeLoginToEmail('Kuba_8A', 'fiszki.local'), 'kuba_8a@fiszki.local');
   assert.equal(core.normalizeLoginToEmail('   '), '');
 });
 
-test('validateAuthForm rejects invalid inputs and accepts valid login/register data', () => {
+test('validateAuthForm enforces 2-field login (3-20 chars) + password (min 6 chars) without email', () => {
   const emptyLogin = core.validateAuthForm('login', { identifier: '', password: '' });
   assert.equal(emptyLogin.valid, false);
   assert.equal(emptyLogin.errors.length, 2);
+  assert.ok(!emptyLogin.errors.join(' ').toLowerCase().includes('e-mail'));
+
+  const shortLogin = core.validateAuthForm('register', { username: 'Ab', password: 'secret123' });
+  assert.equal(shortLogin.valid, false);
+  assert.match(shortLogin.errors[0], /3 do 20/);
+
+  const longLogin = core.validateAuthForm('register', { username: 'abcdefghijklmnopqrstu', password: 'secret123' });
+  assert.equal(longLogin.valid, false);
+  assert.match(longLogin.errors[0], /3 do 20/);
+
+  const spacedLogin = core.validateAuthForm('register', { username: 'Kuba 8A', password: 'secret123' });
+  assert.equal(spacedLogin.valid, false);
+
+  const shortPassword = core.validateAuthForm('register', { username: 'Kuba_8A', password: '123' });
+  assert.equal(shortPassword.valid, false);
+  assert.match(shortPassword.errors[0], /co najmniej 6/);
 
   const validLogin = core.validateAuthForm('login', { identifier: 'Kuba_8A', password: 'secret123' });
   assert.equal(validLogin.valid, true);
 
-  const badRegister = core.validateAuthForm('register', {
-    username: 'A',
-    email: 'not-an-email',
-    className: '8A',
-    password: '123',
-    confirmPassword: '456'
-  });
-  assert.equal(badRegister.valid, false);
-  assert.ok(badRegister.errors.length >= 3);
-
-  const goodRegisterNoEmail = core.validateAuthForm('register', {
-    username: 'Kuba_8A',
-    email: '',
-    className: '8A',
-    password: 'password123',
-    confirmPassword: 'password123'
-  });
-  assert.equal(goodRegisterNoEmail.valid, true);
-
-  const goodRegisterWithEmail = core.validateAuthForm('register', {
-    username: 'Maja K.',
-    email: 'maja@example.com',
-    className: '8A',
-    password: 'password123',
-    confirmPassword: 'password123'
-  });
-  assert.equal(goodRegisterWithEmail.valid, true);
+  const validRegister = core.validateAuthForm('register', { username: 'Maja.8A', password: 'password123' });
+  assert.equal(validRegister.valid, true);
 });
 
 test('calculateStreakUpdate handles first day, same day, consecutive day, and broken streak', () => {

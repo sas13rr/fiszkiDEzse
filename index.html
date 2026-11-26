@@ -374,11 +374,11 @@
         <b>Tryb podglądu lokalnego:</b> nie wklejono jeszcze <code>SUPABASE_CONFIG</code> w <code>index.html</code>. Możesz przetestować rejestrację i ranking lokalnie, a po wklejeniu Project URL i klucza <code>anon</code> dane automatycznie przełączą się na bazę SQL Supabase.
       </div>
 
-      <!-- FORMULARZ LOGOWANIA -->
+      <!-- FORMULARZ LOGOWANIA (TYLKO LOGIN + HASŁO) -->
       <form id="loginForm" onsubmit="handleLoginSubmit(event)" class="space-y-3" novalidate>
         <div>
-          <label for="authLoginIdentifier" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login lub e-mail</label>
-          <input id="authLoginIdentifier" type="text" autocomplete="username" placeholder="np. Kuba_8A lub kuba@szkola.pl" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          <label for="authLoginIdentifier" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login</label>
+          <input id="authLoginIdentifier" type="text" autocomplete="username" maxlength="20" placeholder="np. Kuba_8A" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
         </div>
         <div>
           <label for="authLoginPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
@@ -393,30 +393,17 @@
         </button>
       </form>
 
-      <!-- FORMULARZ REJESTRACJI -->
-      <form id="registerForm" onsubmit="handleRegisterSubmit(event)" class="hidden space-y-2.5" novalidate>
-        <div class="grid grid-cols-3 gap-2">
-          <div class="col-span-2">
-            <label for="authRegUsername" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login (nick)</label>
-            <input id="authRegUsername" type="text" autocomplete="username" maxlength="24" placeholder="np. Kuba_8A" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
-          </div>
-          <div>
-            <label for="authRegClass" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Klasa</label>
-            <input id="authRegClass" type="text" maxlength="20" value="8A" placeholder="8A" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
-          </div>
+      <!-- FORMULARZ REJESTRACJI (TYLKO LOGIN + HASŁO) -->
+      <form id="registerForm" onsubmit="handleRegisterSubmit(event)" class="hidden space-y-3" novalidate>
+        <div>
+          <label for="authRegUsername" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Login</label>
+          <input id="authRegUsername" type="text" autocomplete="username" maxlength="20" placeholder="3–20 znaków (litery, cyfry)" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
         </div>
         <div>
-          <label for="authRegEmail" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">E-mail <span class="text-slate-500 normal-case font-medium">(opcjonalny)</span></label>
-          <input id="authRegEmail" type="email" autocomplete="email" placeholder="Opcjonalnie (np. kuba@szkola.pl)" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
-        </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label for="authRegPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
-            <input id="authRegPassword" type="password" autocomplete="new-password" placeholder="Min. 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
-          </div>
-          <div>
-            <label for="authRegConfirm" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Powtórz</label>
-            <input id="authRegConfirm" type="password" autocomplete="new-password" placeholder="Powtórz hasło" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          <label for="authRegPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
+          <div class="relative">
+            <input id="authRegPassword" type="password" autocomplete="new-password" placeholder="Minimum 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl pl-3.5 pr-11 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+            <button type="button" onclick="togglePasswordVisibility('authRegPassword', this)" aria-label="Pokaż lub ukryj hasło" class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-slate-400 hover:text-white flex items-center justify-center text-sm">👁️</button>
           </div>
         </div>
         <div id="authRegError" role="alert" class="hidden p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-semibold text-rose-200"></div>
@@ -1280,14 +1267,18 @@ const DEMO_LEADERBOARD_KEY = "deutsch_arcade_demo_lb_v1";
 
 let state = SyncCore.createDefaultState();
 
-// Stan sesji i synchronizacji
+// Stan sesji i synchronizacji okresowej (bez niestabilnego Realtime na telefonach)
+const SYNC_DEBOUNCE_MS = 2000;
+const PERIODIC_SYNC_MS = 60000;
 let sbClient = null;
 const IS_CLOUD_ENABLED = SyncCore.isSupabaseConfigured(SUPABASE_CONFIG) && typeof window.supabase !== "undefined";
 let currentUser = null;      // { id, email, username, className } lub null (gość)
 let syncStatus = IS_CLOUD_ENABLED ? "idle" : "local"; // idle | syncing | synced | offline | error | local
 let lastSyncedAt = null;
 let syncDebounceTimer = null;
-let realtimeChannels = [];
+let periodicSyncInterval = null;
+let isSyncInFlight = false;
+let pendingPushAfterSync = false;
 let leaderboardRows = [];
 let leaderboardSort = "xp";
 let leaderboardClassFilter = "ALL";
@@ -1342,7 +1333,7 @@ function loadState() {
 
 /**
  * Natychmiast zapisuje stan do localStorage (płynne działanie na telefonie),
- * a następnie kolejkuje automatyczny zapis w chmurze Supabase (lub w cache demo).
+ * a następnie kolejkuje automatyczny zapis w chmurze Supabase (debounce ~2s).
  */
 function saveState(options = {}) {
   state.updatedAt = new Date().toISOString();
@@ -1374,7 +1365,7 @@ function scheduleCloudSync() {
   clearTimeout(syncDebounceTimer);
   syncDebounceTimer = setTimeout(() => {
     pushProgressToCloud({ silent: true });
-  }, 750);
+  }, SYNC_DEBOUNCE_MS);
 }
 
 function setSyncStatus(nextStatus) {
@@ -1455,7 +1446,7 @@ function upsertDemoLeaderboardEntry(user, st) {
   leaderboardRows = entries;
 }
 
-/* ---------- INICJALIZACJA SUPABASE I AUTOMATYCZNE WZNAWIANIE SESJI ---------- */
+/* ---------- INICJALIZACJA SUPABASE I SYNCHRONIZACJA OKRESOWA ---------- */
 async function initCloudBackend() {
   if (IS_CLOUD_ENABLED) {
     sbClient = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.anonKey, {
@@ -1471,6 +1462,7 @@ async function initCloudBackend() {
     if (session && session.user) {
       await hydrateSignedInSupabaseUser(session.user, { mergeGuest: false });
     } else {
+      stopPeriodicSync();
       currentUser = null;
       loadState();
       refreshUIAll();
@@ -1482,15 +1474,13 @@ async function initCloudBackend() {
           await hydrateSignedInSupabaseUser(sessionObj.user, { mergeGuest: true });
         }
       } else if (event === "SIGNED_OUT") {
-        teardownRealtime();
+        stopPeriodicSync();
         currentUser = null;
         loadState();
         setSyncStatus("idle");
         refreshUIAll();
       }
     });
-
-    subscribeLeaderboardRealtime();
   } else {
     // Tryb lokalny / demo (do czasu wklejenia kluczy Supabase)
     const demoSession = readDemoStore(DEMO_SESSION_KEY, null);
@@ -1577,7 +1567,7 @@ async function hydrateSignedInSupabaseUser(authUser, options = {}) {
   state = merged;
   persistStateToCache(currentUser.id, state);
   await pushProgressToCloud({ silent: true });
-  subscribeUserProgressRealtime(currentUser.id);
+  startPeriodicSync();
   refreshUIAll();
 }
 
@@ -1601,6 +1591,13 @@ async function pushProgressToCloud(options = {}) {
     return false;
   }
 
+  if (isSyncInFlight && !options.fromSync) {
+    pendingPushAfterSync = true;
+    return false;
+  }
+
+  const acquiredLock = !options.fromSync;
+  if (acquiredLock) isSyncInFlight = true;
   setSyncStatus("syncing");
   try {
     const payload = SyncCore.toCloudProgressRow(currentUser.id, state);
@@ -1620,23 +1617,33 @@ async function pushProgressToCloud(options = {}) {
     setSyncStatus(navigator.onLine ? "error" : "offline");
     if (!options.silent) showToast("Zapisano lokalnie — ponowię synchronizację później", "⚠️", "rose");
     return false;
+  } finally {
+    if (acquiredLock) {
+      isSyncInFlight = false;
+      if (pendingPushAfterSync && currentUser) {
+        pendingPushAfterSync = false;
+        scheduleCloudSync();
+      }
+    }
   }
 }
 
 async function pullProgressFromCloud(options = {}) {
-  if (!currentUser) return;
+  if (!currentUser) return false;
   if (!IS_CLOUD_ENABLED) {
     upsertDemoLeaderboardEntry(currentUser, state);
     refreshUIAll();
     if (!options.silent) showToast("Dane są aktualne (tryb lokalny)", "💾", "emerald");
-    return;
+    return true;
   }
   if (!navigator.onLine) {
     setSyncStatus("offline");
     if (!options.silent) showToast("Brak internetu — używasz kopii z urządzenia", "📴", "rose");
-    return;
+    return false;
   }
+  if (isSyncInFlight) return false;
 
+  isSyncInFlight = true;
   setSyncStatus("syncing");
   try {
     const { data: progRow, error } = await sbClient
@@ -1657,65 +1664,46 @@ async function pullProgressFromCloud(options = {}) {
     }
 
     if (hasPendingLocal || !remoteState) {
-      await pushProgressToCloud({ silent: true });
+      await pushProgressToCloud({ silent: true, fromSync: true });
     } else {
       lastSyncedAt = new Date();
       setSyncStatus("synced");
     }
 
+    if (options.refreshBoard !== false) {
+      await refreshLeaderboard(false);
+    }
+
     if (!options.silent) showToast("Zsynchronizowano z chmurą!", "☁️", "emerald");
+    return true;
   } catch (err) {
     console.warn("Błąd pobierania z Supabase:", err);
     setSyncStatus("error");
     if (!options.silent) showToast("Nie udało się połączyć z chmurą", "⚠️", "rose");
+    return false;
+  } finally {
+    isSyncInFlight = false;
+    if (pendingPushAfterSync && currentUser) {
+      pendingPushAfterSync = false;
+      scheduleCloudSync();
+    }
   }
 }
 
-function teardownRealtime() {
-  if (!sbClient) return;
-  realtimeChannels.forEach(ch => {
-    try { sbClient.removeChannel(ch); } catch (_) {}
-  });
-  realtimeChannels = [];
+function startPeriodicSync() {
+  stopPeriodicSync();
+  if (!IS_CLOUD_ENABLED || !currentUser) return;
+  periodicSyncInterval = setInterval(() => {
+    if (!currentUser || document.visibilityState !== "visible" || !navigator.onLine) return;
+    pullProgressFromCloud({ silent: true, refreshBoard: true });
+  }, PERIODIC_SYNC_MS);
 }
 
-function subscribeUserProgressRealtime(userId) {
-  if (!IS_CLOUD_ENABLED || !sbClient || !userId) return;
-  const ch = sbClient
-    .channel(`user-progress-${userId}`)
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "user_progress", filter: `user_id=eq.${userId}` },
-      (payload) => {
-        if (!payload.new) return;
-        const remote = SyncCore.fromCloudProgressRow(payload.new);
-        if (!remote) return;
-        // Ignoruj echa własnego zapisu o tej samej lub starszej wersji
-        if (remote.syncVersion <= state.syncVersion && remote.lastResetAt === state.lastResetAt) return;
-        state = SyncCore.mergeProgressStates(state, remote, { mergeGuest: false });
-        persistStateToCache(userId, state);
-        lastSyncedAt = new Date();
-        setSyncStatus("synced");
-        refreshUIAll();
-      }
-    )
-    .subscribe();
-  realtimeChannels.push(ch);
-}
-
-function subscribeLeaderboardRealtime() {
-  if (!IS_CLOUD_ENABLED || !sbClient) return;
-  const ch = sbClient
-    .channel("class-leaderboard-live")
-    .on(
-      "postgres_changes",
-      { event: "*", schema: "public", table: "leaderboard_entries" },
-      () => {
-        refreshLeaderboard(false);
-      }
-    )
-    .subscribe();
-  realtimeChannels.push(ch);
+function stopPeriodicSync() {
+  if (periodicSyncInterval) {
+    clearInterval(periodicSyncInterval);
+    periodicSyncInterval = null;
+  }
 }
 
 /* ---------- OBSŁUGA KONTA: MODAL, LOGOWANIE, REJESTRACJA, WYLOGOWANIE ---------- */
@@ -1777,24 +1765,25 @@ function togglePasswordVisibility(inputId, btnEl) {
 function translateAuthError(err) {
   const msg = String((err && err.message) || err || "");
   if (/email logins are disabled|email signups are disabled/i.test(msg)) {
-    return "Logowanie e-mail/hasłem jest wyłączone w Supabase. Włącz 'Enable Email provider' w Authentication → Providers → Email (wyłącz tylko 'Confirm email').";
+    return "Logowanie hasłem jest wyłączone w panelu Supabase. Włącz 'Enable Email provider' (Authentication → Providers → Email).";
   }
-  if (/invalid login credentials/i.test(msg)) return "Nieprawidłowy login/e-mail lub hasło.";
-  if (/email not confirmed/i.test(msg)) return "Potwierdź adres e-mail klikając link wysłany na skrzynkę (lub wyłącz 'Confirm email' w ustawieniach Supabase).";
-  if (/user already registered/i.test(msg)) return "Konto z tym loginem lub adresem e-mail już istnieje.";
-  if (/password should be at least/i.test(msg)) return "Hasło musi mieć co najmniej 6 znaków.";
-  if (/rate limit/i.test(msg)) return "Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.";
+  if (/invalid login credentials/i.test(msg)) return "Nieprawidłowy login lub hasło.";
+  if (/email not confirmed/i.test(msg)) return "Konto wymaga aktywacji w ustawieniach Supabase (wyłącz 'Confirm email' w Authentication → Providers → Email).";
+  if (/user already registered|already been registered|duplicate key/i.test(msg)) return "Ten login jest już zajęty. Wybierz inny.";
+  if (/password should be at least|weak password/i.test(msg)) return "Hasło musi mieć co najmniej 6 znaków.";
+  if (/rate limit|too many requests/i.test(msg)) return "Zbyt wiele prób. Odczekaj chwilę i spróbuj ponownie.";
+  if (/invalid email|unable to validate email/i.test(msg)) return "Login zawiera niedozwolone znaki. Użyj liter i cyfr (3–20 znaków).";
   return msg || "Wystąpił błąd połączenia. Spróbuj ponownie.";
 }
 
 async function handleLoginSubmit(e) {
   e.preventDefault();
-  const identifier = document.getElementById("authLoginIdentifier").value.trim();
+  const login = SyncCore.sanitizeUsername(document.getElementById("authLoginIdentifier").value);
   const password = document.getElementById("authLoginPassword").value;
   const errId = "authLoginError";
   document.getElementById(errId).classList.add("hidden");
 
-  const validation = SyncCore.validateAuthForm("login", { identifier, password });
+  const validation = SyncCore.validateAuthForm("login", { identifier: login, password });
   if (!validation.valid) {
     SFX.bad();
     showAuthError(errId, validation.errors[0]);
@@ -1806,37 +1795,36 @@ async function handleLoginSubmit(e) {
   btn.textContent = "Logowanie...";
 
   try {
-    let email = SyncCore.normalizeLoginToEmail(identifier);
-    let resolvedByNick = false;
-    let rpcLookupAvailable = false;
+    const primaryEmail = SyncCore.normalizeLoginToEmail(login, "fiszki.app");
+    const legacyEmail = SyncCore.normalizeLoginToEmail(login, "fiszki.local");
 
     if (IS_CLOUD_ENABLED) {
-      if (!identifier.includes("@")) {
-        try {
-          const { data: resolvedEmail, error: lookupErr } = await sbClient.rpc("resolve_login_email", {
-            p_identifier: identifier
-          });
-          if (!lookupErr) {
-            rpcLookupAvailable = true;
-            if (resolvedEmail && typeof resolvedEmail === "string") {
-              email = resolvedEmail.trim().toLowerCase();
-              resolvedByNick = true;
-            }
-          }
-        } catch (_) {}
+      let authEmail = primaryEmail;
+      let resolvedFromProfile = false;
+
+      // Sprawdź dopasowanie loginu w bazie (obsługuje również starsze konta)
+      try {
+        const { data: resolvedEmail, error: lookupErr } = await sbClient.rpc("resolve_login_email", {
+          p_identifier: login
+        });
+        if (!lookupErr && resolvedEmail && typeof resolvedEmail === "string") {
+          authEmail = resolvedEmail.trim().toLowerCase();
+          resolvedFromProfile = true;
+        }
+      } catch (_) {}
+
+      let { data, error } = await sbClient.auth.signInWithPassword({ email: authEmail, password });
+
+      // Cichy fallback dla starszych kont utworzonych na @fiszki.local
+      if (error && /invalid login credentials/i.test(String(error.message || "")) && !resolvedFromProfile && legacyEmail && legacyEmail !== authEmail) {
+        const fallbackRes = await sbClient.auth.signInWithPassword({ email: legacyEmail, password });
+        if (!fallbackRes.error) {
+          data = fallbackRes.data;
+          error = null;
+        }
       }
 
-      const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
-      if (error) {
-        if (/invalid login credentials/i.test(String(error.message || "")) && !identifier.includes("@") && !resolvedByNick) {
-          throw new Error(
-            rpcLookupAvailable
-              ? "Nieprawidłowy login lub hasło. Sprawdź hasło lub spróbuj wpisać pełny adres e-mail użyty przy rejestracji."
-              : "Nieprawidłowy login lub hasło. Jeśli przy rejestracji podałeś swój e-mail, zaloguj się nim (albo uruchom w Supabase funkcję SQL resolve_login_email, żeby logować się samym nickiem)."
-          );
-        }
-        throw error;
-      }
+      if (error) throw error;
       if (data && data.user) {
         await hydrateSignedInSupabaseUser(data.user, { mergeGuest: true });
       }
@@ -1847,10 +1835,14 @@ async function handleLoginSubmit(e) {
     } else {
       // Tryb lokalny demo
       const users = readDemoStore(DEMO_USERS_KEY, []);
-      const found = users.find(u => u.email === email || u.usernameLower === identifier.toLowerCase());
-      if (!found) throw new Error("Nie znaleziono konta o tym loginie. Załóż nowe konto w zakładce Rejestracja.");
+      const found = users.find(u =>
+        u.usernameLower === login.toLowerCase() ||
+        u.email === primaryEmail ||
+        u.email === legacyEmail
+      );
+      if (!found) throw new Error("Nie znaleziono konta o tym loginie. Załóż konto w zakładce Rejestracja.");
       const hashed = await hashDemoPassword(password, found.id);
-      if (hashed !== found.passwordHash) throw new Error("Nieprawidłowy login/e-mail lub hasło.");
+      if (hashed !== found.passwordHash) throw new Error("Nieprawidłowy login lub hasło.");
 
       const guestSnapshot = loadStateFromCache(null);
       currentUser = { id: found.id, email: found.email, username: found.username, className: found.className };
@@ -1879,16 +1871,12 @@ async function handleLoginSubmit(e) {
 async function handleRegisterSubmit(e) {
   e.preventDefault();
   const username = SyncCore.sanitizeUsername(document.getElementById("authRegUsername").value);
-  const className = document.getElementById("authRegClass").value.trim() || "Klasa";
-  const emailInput = document.getElementById("authRegEmail").value.trim();
   const password = document.getElementById("authRegPassword").value;
-  const confirmPassword = document.getElementById("authRegConfirm").value;
+  const className = "Klasa";
   const errId = "authRegError";
   document.getElementById(errId).classList.add("hidden");
 
-  const validation = SyncCore.validateAuthForm("register", {
-    username, email: emailInput, className, password, confirmPassword
-  });
+  const validation = SyncCore.validateAuthForm("register", { username, password });
   if (!validation.valid) {
     SFX.bad();
     showAuthError(errId, validation.errors[0]);
@@ -1900,14 +1888,18 @@ async function handleRegisterSubmit(e) {
   btn.textContent = "Tworzenie konta...";
 
   try {
-    const authEmail = emailInput ? emailInput.toLowerCase() : SyncCore.normalizeLoginToEmail(username);
+    // Wewnętrzne mapowanie loginu na techniczny identyfikator Supabase Auth (@fiszki.app)
+    const authEmail = SyncCore.normalizeLoginToEmail(username, "fiszki.app");
+    if (!authEmail) {
+      throw new Error("Login musi zawierać litery lub cyfry (3–20 znaków).");
+    }
 
     if (IS_CLOUD_ENABLED) {
-      // Sprawdź dostępność loginu przed rejestracją (bezpiecznie jeśli SQL nie został jeszcze uruchomiony)
+      // Sprawdź dostępność loginu przed rejestracją
       try {
         const { data: available, error: rpcErr } = await sbClient.rpc("is_username_available", { p_username: username });
         if (!rpcErr && available === false) {
-          throw new Error("Ten login jest już zajęty. Wybierz inny nick.");
+          throw new Error("Ten login jest już zajęty. Wybierz inny.");
         }
       } catch (rpcCatch) {
         if (rpcCatch && /zajęty/i.test(String(rpcCatch.message || ""))) throw rpcCatch;
@@ -1929,24 +1921,17 @@ async function handleRegisterSubmit(e) {
         await hydrateSignedInSupabaseUser(data.user, { mergeGuest: true });
         closeAuthModal();
         document.getElementById("authRegPassword").value = "";
-        document.getElementById("authRegConfirm").value = "";
         SFX.fanfare();
         fireConfetti(65);
         showToast(`Konto ${username} gotowe! Postępy zapisują się w chmurze.`, "☁️", "emerald");
       } else {
-        closeAuthModal();
-        showModal({
-          icon: "📧",
-          title: "Sprawdź skrzynkę e-mail",
-          text: "Konto zostało utworzone! Kliknij link potwierdzający na e-mailu, a potem zaloguj się (w Supabase możesz też wyłączyć 'Confirm email', aby logowanie działało od razu).",
-          actions: [{ label: "OK", className: "btn-arcade flex-1 py-3 rounded-xl bg-indigo-500 text-white font-extrabold text-sm" }]
-        });
+        throw new Error("Konto utworzono, ale Supabase wymaga wyłączenia opcji 'Confirm email' w ustawieniach logowania.");
       }
     } else {
       // Tryb lokalny demo
       const users = readDemoStore(DEMO_USERS_KEY, []);
       if (users.some(u => u.usernameLower === username.toLowerCase() || u.email === authEmail)) {
-        throw new Error("Ten login lub e-mail jest już zajęty.");
+        throw new Error("Ten login jest już zajęty. Wybierz inny.");
       }
       const newId = "local-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
       const passwordHash = await hashDemoPassword(password, newId);
@@ -1971,7 +1956,6 @@ async function handleRegisterSubmit(e) {
 
       closeAuthModal();
       document.getElementById("authRegPassword").value = "";
-      document.getElementById("authRegConfirm").value = "";
       refreshUIAll();
       SFX.fanfare();
       fireConfetti(65);
@@ -1998,10 +1982,11 @@ function confirmSignOut() {
         label: "Wyloguj",
         className: "btn-arcade flex-1 py-3 rounded-xl bg-indigo-500 text-white font-extrabold text-sm",
         onClick: async () => {
+          stopPeriodicSync();
+          clearTimeout(syncDebounceTimer);
           await pushProgressToCloud({ silent: true });
           if (IS_CLOUD_ENABLED && sbClient) {
             await sbClient.auth.signOut();
-            teardownRealtime();
           } else {
             try { localStorage.removeItem(DEMO_SESSION_KEY); } catch (_) {}
           }
@@ -2179,7 +2164,7 @@ function renderLeaderboard() {
     setupNotice.classList.toggle("hidden", !(IS_CLOUD_ENABLED && supabaseTablesMissing));
   }
   if (IS_CLOUD_ENABLED) {
-    livePill.textContent = supabaseTablesMissing ? "Czeka na SQL" : "Na żywo";
+    livePill.textContent = supabaseTablesMissing ? "Czeka na SQL" : "Chmura · 60s";
     livePill.className = supabaseTablesMissing
       ? "whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/30"
       : "whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30";
@@ -3125,11 +3110,12 @@ function gradeFlashcard(known) {
     state.mastered = state.mastered.filter(id => id !== item.id);
   }
 
-  saveState();
   cardIdx++;
   if (cardIdx >= cardDeck.length) {
+    saveState({ immediate: true });
     showRoundSummary();
   } else {
+    saveState();
     renderFlashcard(true);
   }
 }
@@ -4490,8 +4476,8 @@ function renderProfileAccountCard() {
   }
 
   const timeStr = lastSyncedAt
-    ? `Ostatnia synchr.: ${lastSyncedAt.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })}`
-    : "Auto-zapis aktywny + kopia w pamięci urządzenia";
+    ? `Ostatnia synchr.: ${lastSyncedAt.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" })} · auto co 60s`
+    : "Auto-sync co 60s + kopia w pamięci urządzenia";
 
   card.innerHTML = `
     <div class="flex items-start justify-between gap-2 mb-3">
@@ -4508,7 +4494,7 @@ function renderProfileAccountCard() {
       <button type="button" onclick="confirmSignOut()" class="btn-arcade px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-slate-300 font-bold text-[11px] shrink-0">Wyloguj</button>
     </div>
     <div class="grid grid-cols-2 gap-2">
-      <button type="button" onclick="pullProgressFromCloud({ silent: false })" class="btn-arcade py-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 font-extrabold text-xs">↻ Synchronizuj teraz</button>
+      <button type="button" onclick="pullProgressFromCloud({ silent: false, refreshBoard: true })" class="btn-arcade py-2.5 rounded-xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-200 font-extrabold text-xs">↻ Synchronizuj teraz</button>
       <button type="button" onclick="openEditProfileModal()" class="btn-arcade py-2.5 rounded-xl glass border border-white/10 text-slate-200 font-bold text-xs">✏️ Edytuj nick / klasę</button>
     </div>
   `;
@@ -4663,7 +4649,7 @@ function confirmResetProgress() {
 window.addEventListener("online", () => {
   if (currentUser) {
     showToast("Wrócił internet — synchronizuję postępy!", "☁️", "emerald");
-    pullProgressFromCloud({ silent: true });
+    pullProgressFromCloud({ silent: true, refreshBoard: true });
   }
 });
 
@@ -4680,7 +4666,7 @@ document.addEventListener("visibilitychange", () => {
     clearTimeout(syncDebounceTimer);
     pushProgressToCloud({ silent: true });
   } else if (document.visibilityState === "visible") {
-    pullProgressFromCloud({ silent: true });
+    pullProgressFromCloud({ silent: true, refreshBoard: true });
   }
 });
 

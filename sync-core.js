@@ -134,16 +134,12 @@
   }
 
   function sanitizeUsername(raw) {
-    return String(raw || '').trim().replace(/\s+/g, ' ');
+    return String(raw || '').trim().replace(/\s+/g, '');
   }
 
-  function normalizeLoginToEmail(loginOrEmail) {
-    const trimmed = String(loginOrEmail || '').trim();
-    if (!trimmed) return '';
-    if (trimmed.includes('@')) {
-      return trimmed.toLowerCase();
-    }
-    const slug = trimmed
+  function cleanLoginSlug(login) {
+    return String(login || '')
+      .trim()
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
@@ -151,48 +147,33 @@
       .replace(/[^a-z0-9._-]/g, '_')
       .replace(/_+/g, '_')
       .replace(/^_|_$/g, '');
-    return slug ? `${slug}@fiszki.local` : '';
+  }
+
+  function normalizeLoginToEmail(login, domain) {
+    const cleanDomain = String(domain || 'fiszki.app').trim().toLowerCase();
+    const slug = cleanLoginSlug(login);
+    return slug ? `${slug}@${cleanDomain}` : '';
   }
 
   function validateAuthForm(mode, fields) {
     const errors = [];
-    const password = String(fields.password || '');
+    const safeFields = fields || {};
+    const password = String(safeFields.password || '');
+    const rawLogin = mode === 'register' ? safeFields.username : (safeFields.identifier ?? safeFields.username);
+    const login = String(rawLogin || '').trim();
 
-    if (mode === 'register') {
-      const username = sanitizeUsername(fields.username);
-      const email = String(fields.email || '').trim();
-      const className = String(fields.className || '').trim();
-      const confirmPassword = String(fields.confirmPassword || '');
+    if (!login) {
+      errors.push('Wpisz swój login.');
+    } else if (login.length < 3 || login.length > 20) {
+      errors.push('Login musi mieć od 3 do 20 znaków.');
+    } else if (!/^[a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ._-]+$/.test(login)) {
+      errors.push('Login może zawierać tylko litery, cyfry oraz znaki _ . - (bez spacji).');
+    } else if (!cleanLoginSlug(login)) {
+      errors.push('Login musi zawierać litery lub cyfry.');
+    }
 
-      if (username.length < 2 || username.length > 24) {
-        errors.push('Login (nick) musi mieć od 2 do 24 znaków.');
-      } else if (!/^[a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _.-]+$/.test(username)) {
-        errors.push('Login może zawierać tylko litery, cyfry, spacje oraz znaki _ . -');
-      }
-
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        errors.push('Podaj poprawny adres e-mail (albo zostaw pole puste, by logować się samym loginem).');
-      }
-
-      if (className && className.length > 20) {
-        errors.push('Nazwa klasy może mieć maksymalnie 20 znaków.');
-      }
-
-      if (password.length < 6) {
-        errors.push('Hasło musi mieć co najmniej 6 znaków.');
-      }
-
-      if (password !== confirmPassword) {
-        errors.push('Hasła nie są identyczne.');
-      }
-    } else {
-      const identifier = String(fields.identifier || '').trim();
-      if (!identifier) {
-        errors.push('Wpisz swój login lub adres e-mail.');
-      }
-      if (password.length < 6) {
-        errors.push('Hasło musi mieć co najmniej 6 znaków.');
-      }
+    if (password.length < 6) {
+      errors.push('Hasło musi mieć co najmniej 6 znaków.');
     }
 
     return {
@@ -478,6 +459,7 @@
     calculateStreakUpdate,
     getActiveStreakDisplay,
     sanitizeUsername,
+    cleanLoginSlug,
     normalizeLoginToEmail,
     validateAuthForm,
     isSupabaseConfigured,
