@@ -260,6 +260,22 @@ $$;
 
 grant execute on function public.is_username_available(text) to anon, authenticated;
 
+-- Pozwala logować się samym loginem (nickiem) nawet jeśli konto założono z prawdziwym adresem e-mail
+create or replace function public.resolve_login_email(p_identifier text)
+returns text
+language sql
+security definer
+set search_path = public, auth
+as $$
+  select u.email
+  from public.profiles p
+  join auth.users u on u.id = p.id
+  where p.username_lower = lower(trim(p_identifier))
+  limit 1;
+$$;
+
+grant execute on function public.resolve_login_email(text) to anon, authenticated;
+
 -- ============================================================================
 -- 5. UPRAWNIENIA ROW LEVEL SECURITY (RLS)
 -- ============================================================================

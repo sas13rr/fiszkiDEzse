@@ -382,7 +382,10 @@
         </div>
         <div>
           <label for="authLoginPassword" class="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hasło</label>
-          <input id="authLoginPassword" type="password" autocomplete="current-password" placeholder="Minimum 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+          <div class="relative">
+            <input id="authLoginPassword" type="password" autocomplete="current-password" placeholder="Minimum 6 znaków" class="w-full bg-slate-900/80 border border-white/15 focus:border-indigo-400 rounded-xl pl-3.5 pr-11 py-2.5 text-sm text-white placeholder-slate-500 outline-none">
+            <button type="button" onclick="togglePasswordVisibility('authLoginPassword', this)" aria-label="Pokaż lub ukryj hasło" class="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-slate-400 hover:text-white flex items-center justify-center text-sm">👁️</button>
+          </div>
         </div>
         <div id="authLoginError" role="alert" class="hidden p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs font-semibold text-rose-200"></div>
         <button id="authLoginSubmitBtn" type="submit" class="btn-arcade w-full py-3.5 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-black text-sm shadow-lg shadow-indigo-500/25">
@@ -1763,8 +1766,19 @@ function showAuthError(boxId, message) {
   box.classList.remove("hidden");
 }
 
+function togglePasswordVisibility(inputId, btnEl) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  const show = inp.type === "password";
+  inp.type = show ? "text" : "password";
+  if (btnEl) btnEl.textContent = show ? "🙈" : "👁️";
+}
+
 function translateAuthError(err) {
   const msg = String((err && err.message) || err || "");
+  if (/email logins are disabled|email signups are disabled/i.test(msg)) {
+    return "Logowanie e-mail/hasłem jest wyłączone w Supabase. Włącz 'Enable Email provider' w Authentication → Providers → Email (wyłącz tylko 'Confirm email').";
+  }
   if (/invalid login credentials/i.test(msg)) return "Nieprawidłowy login/e-mail lub hasło.";
   if (/email not confirmed/i.test(msg)) return "Potwierdź adres e-mail klikając link wysłany na skrzynkę (lub wyłącz 'Confirm email' w ustawieniach Supabase).";
   if (/user already registered/i.test(msg)) return "Konto z tym loginem lub adresem e-mail już istnieje.";
@@ -1792,11 +1806,37 @@ async function handleLoginSubmit(e) {
   btn.textContent = "Logowanie...";
 
   try {
-    const email = SyncCore.normalizeLoginToEmail(identifier);
+    let email = SyncCore.normalizeLoginToEmail(identifier);
+    let resolvedByNick = false;
+    let rpcLookupAvailable = false;
 
     if (IS_CLOUD_ENABLED) {
+      if (!identifier.includes("@")) {
+        try {
+          const { data: resolvedEmail, error: lookupErr } = await sbClient.rpc("resolve_login_email", {
+            p_identifier: identifier
+          });
+          if (!lookupErr) {
+            rpcLookupAvailable = true;
+            if (resolvedEmail && typeof resolvedEmail === "string") {
+              email = resolvedEmail.trim().toLowerCase();
+              resolvedByNick = true;
+            }
+          }
+        } catch (_) {}
+      }
+
       const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      if (error) {
+        if (/invalid login credentials/i.test(String(error.message || "")) && !identifier.includes("@") && !resolvedByNick) {
+          throw new Error(
+            rpcLookupAvailable
+              ? "Nieprawidłowy login lub hasło. Sprawdź hasło lub spróbuj wpisać pełny adres e-mail użyty przy rejestracji."
+              : "Nieprawidłowy login lub hasło. Jeśli przy rejestracji podałeś swój e-mail, zaloguj się nim (albo uruchom w Supabase funkcję SQL resolve_login_email, żeby logować się samym nickiem)."
+          );
+        }
+        throw error;
+      }
       if (data && data.user) {
         await hydrateSignedInSupabaseUser(data.user, { mergeGuest: true });
       }
